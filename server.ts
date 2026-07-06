@@ -331,11 +331,8 @@ function robustExtractRedesignJson(rawText: string): any {
 
 export const app = express();
 
-async function startServer() {
-  const PORT = 3000;
-
-  // Body parser with 10mb limit for pasting long resumes/jobs
-  app.use(express.json({ limit: "10mb" }));
+// Body parser with 10mb limit for pasting long resumes/jobs
+app.use(express.json({ limit: "10mb" }));
 
   // Initialize Gemini client lazily/safely
   const getGeminiClient = () => {
@@ -1475,6 +1472,10 @@ Gib nur den extrahierten, formatierten Text zurück, ohne Kommentare oder Einlei
       res.status(500).json({ error: error.message || "Interner Serverfehler beim direkten Analysieren der Datei." });
     }
   });
+
+// Function to start server in non-serverless environments
+async function startServer() {
+  const PORT = 3000;
 
   // --- Serve Vite App / Production Static Files ---
   if (process.env.NODE_ENV !== "production") {
