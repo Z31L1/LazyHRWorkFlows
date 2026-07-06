@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy-First ATS Transformer & AI-Bridge</title>
+    <!-- Suppress Vite's benign websocket HMR connection errors in this sandboxed environment -->
+    <script>
+      (function() {
+        // Intercept and stub the browser's WebSocket constructor to completely avoid Vite HMR connection failures
+        const OriginalWebSocket = window.WebSocket;
+        if (OriginalWebSocket) {
+          const MockWebSocket = function(url, protocols) {
+            const isViteWS = typeof url === 'string' && (
+              url.includes('websocket') || 
+              url.includes('vite') || 
+              url.includes('localhost') || 
+              url.includes('127.0.0.1') || 
+              url.includes('run.app')
+            );
+            if (isViteWS) {
+              console.log('[Sandboxed Env] Intercepted and silenced Vite HMR WebSocket:', url);
+              const mockWS = {
+                url: url,
+                readyState: 0, // CONNECTING
+                send: function() {},
+                close: function() {},
+                addEventListener: function(type, listener) {
+                  if (type === 'close') this.onclose = listener;
+                  if (type === 'error') this.onerror = listener;
+                  if (type === 'open') this.onopen = listener;
+                  if (type === 'message') this.onmessage = listener;
+                },
+                removeEventListener: function() {},
+                onopen: null,
+                onclose: null,
+                onerror: null,
+                onmessage: null
+              };
+              // Settle immediately or close cleanly to prevent pending connection warnings
+              setTimeout(() => {
+                if (mockWS.onclose) {
+                  mockWS.onclose({ wasClean: true, code: 1000, reason: "Silenced Vite HMR" });
+                }
+              }, 50);
+              return mockWS;
+            }
+            try {
+              return new OriginalWebSocket(url, protocols);
+            } catch (err) {
+              console.warn('Original WebSocket construction failed:', err);
+              throw err;
+            }
+          };
+          MockWebSocket.prototype = OriginalWebSocket.prototype;
+          // Assign mock constructor
+          window.WebSocket = MockWebSocket;
+        }
+
+        const originalError = console.error;
+        const originalWarn = console.warn;
+        console.error = function(...args) {
+          const msg = args.join(' ');
+          if (msg.includes('websocket') || msg.includes('WebSocket') || msg.includes('[vite]') || msg.includes('HMR') || msg.includes('closed without opened')) {
+            return;
+          }
+          originalError.apply(console, args);
+        };
+        console.warn = function(...args) {
+          const msg = args.join(' ');
+          if (msg.includes('websocket') || msg.includes('WebSocket') || msg.includes('[vite]') || msg.includes('HMR') || msg.includes('closed without opened')) {
+            return;
+          }
+          originalWarn.apply(console, args);
+        };
+
+        window.addEventListener('error', function(e) {
+          if (e.message && (e.message.includes('websocket') || e.message.includes('WebSocket') || e.message.includes('HMR') || e.message.includes('closed without opened'))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          const reason = e.reason && (e.reason.message || String(e.reason));
+          if (reason && (reason.includes('websocket') || reason.includes('WebSocket') || reason.includes('HMR') || reason.includes('closed without opened'))) {
+            e.stopImmediatePropagation();
+            e.preventDefault();
+          }
+        }, true);
+      })();
+    </script>
+    <!-- pdf-lib and pdf.js for GDPR local processing -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  </head>
+  <body class="bg-slate-900 text-slate-100">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

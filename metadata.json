@@ -1,0 +1,6 @@
+{
+  "name": "Lazy-HR-Workaround",
+  "description": "Das Projekt \"Lazy-HR-Workaround\" vollendet die soziotechnische Entropie-Eliminierung. Da die Gegenseite den \"Human\"-Faktor in der Rekrutierung lediglich als semantische Dekoration für einen defizitären Algorithmus nutzt, intervenieren wir durch eine vollautomatische Antwort-Architektur. Wir senden keine \"Bewerbungen\", wir senden synchronisierte Daten-Payloads, die den Parser der Gegenseite bedienen, ohne den Ineffizienz-Ballast menschlicher Kommunikation. Das H in HR ist obsolet; wir verwalten den Daten-Durchsatz eines Systems, das den Menschen längst als Variable gestrichen hat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
