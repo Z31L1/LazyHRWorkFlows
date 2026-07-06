@@ -1,7 +1,6 @@
 import express from "express";
 import path from "path";
 import { GoogleGenAI, Type } from "@google/genai";
-import { createServer as createViteServer } from "vite";
 import multer from "multer";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -1479,6 +1478,7 @@ async function startServer() {
 
   // --- Serve Vite App / Production Static Files ---
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
