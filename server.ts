@@ -329,8 +329,9 @@ function robustExtractRedesignJson(rawText: string): any {
   return result;
 }
 
+export const app = express();
+
 async function startServer() {
-  const app = express();
   const PORT = 3000;
 
   // Body parser with 10mb limit for pasting long resumes/jobs
@@ -1495,4 +1496,6 @@ Gib nur den extrahierten, formatierten Text zurück, ohne Kommentare oder Einlei
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
