@@ -36,6 +36,7 @@ import {
   Edit3
 } from "lucide-react";
 import { AtsGauge } from "./components/AtsGauge";
+import logo from "./assets/logo.png";
 
 // Ensure window types are known
 declare global {
@@ -2237,12 +2238,12 @@ export default function App() {
           <div className="flex items-center space-x-3">
             <div className="relative group z-[100]">
               <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border-2 border-slate-700/50 group-hover:border-emerald-500/50 transition-colors cursor-pointer bg-slate-800 flex items-center justify-center shadow-lg">
-                <img src="/logo.png" alt="Lazy-HR-Workaround Logo" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('bg-emerald-600') }} />
+                <img src={logo} alt="Lazy-HR-Workaround Logo" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('bg-emerald-600') }} />
                 <ShieldCheck className="h-8 w-8 text-white absolute -z-10" />
               </div>
               
               <div className="absolute top-24 sm:top-28 left-0 w-80 sm:w-96 bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 pointer-events-none origin-top-left z-[100]">
-                <img src="/logo.png" alt="Lazy-HR-Workaround Original" className="w-full h-auto rounded-lg mb-3 border border-slate-800" onError={(e) => e.currentTarget.style.display = 'none'} />
+                <img src={logo} alt="Lazy-HR-Workaround Original" className="w-full h-auto rounded-lg mb-3 border border-slate-800" onError={(e) => e.currentTarget.style.display = 'none'} />
                 
                 <h4 className="font-bold text-slate-100 text-sm mb-2 leading-tight">Lazy-HR-Workaround: Intelligente Automatisierung für deinen Bewerbungserfolg</h4>
                 <div className="space-y-2 text-[11px] text-slate-300 leading-relaxed">
