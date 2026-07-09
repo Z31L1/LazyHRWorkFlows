@@ -1152,7 +1152,20 @@ Präferenzen:
   // 3b. Redesign CV & Cover Letter in Gelb-Schwarz using Gemma model
   app.post("/api/redesign-cv", async (req, res) => {
     try {
-      const { cvText, style, palette, primary, secondary, accent, manualSketchGrid, backgroundType } = req.body;
+      const {
+        cvText,
+        style,
+        palette,
+        primary,
+        secondary,
+        accent,
+        primary_light,
+        primary_dark,
+        secondary_light,
+        secondary_dark,
+        manualSketchGrid,
+        backgroundType
+      } = req.body;
       if (!cvText || !cvText.trim()) {
         return res.status(400).json({ error: "Bitte geben Sie einen Lebenslauf-Text an." });
       }
@@ -1163,42 +1176,35 @@ Präferenzen:
       const actualBgColor = isLightBg ? "#FFFFFF" : "#000000";
       const actualTextColor = isLightBg ? "#1E293B" : "#F8FAFC";
 
-      // Palette details to inject
-      let paletteDescription = "";
-      if (palette === "split_complementary" || palette === "Gesplittet komplementär") {
-        paletteDescription = `Farbpalette: Gesplittet komplementär (Split-Complementary).
-Die exakten harmonischen CSS-Hex-Farbcodes, die du zwingend im Design verwenden MUSST:
-- Primärfarbe (Haupttitel, prominente Akzente): ${primary || "#FACC15"}
-- Sekundärfarbe (Unterstützende Design-Linien, Trenner): ${secondary || "#818CF8"}
-- Akzentfarbe (besondere Badges, kleine Highlights): ${accent || "#EC4899"}
-- Hintergrundfarbe (body-background): ${actualBgColor}
-- Textfarbe (Haupttext): ${actualTextColor}`;
-      } else if (palette === "triadic" || palette === "Triade") {
-        paletteDescription = `Farbpalette: Triade (Triadic).
-Die exakten harmonischen CSS-Hex-Farbcodes, die du zwingend im Design verwenden MUSST:
-- Primärfarbe (Haupttitel, prominente Akzente): ${primary || "#FACC15"}
-- Sekundärfarbe (Unterstützende Design-Linien, Trenner): ${secondary || "#06B6D4"}
-- Akzentfarbe (besondere Badges, kleine Highlights): ${accent || "#F43F5E"}
-- Hintergrundfarbe (body-background): ${actualBgColor}
-- Textfarbe (Haupttext): ${actualTextColor}`;
-      } else {
-        // Monochromatic is default
-        paletteDescription = `Farbpalette: Monochromatisch (Monochromatic).
-Die exakten harmonischen CSS-Hex-Farbcodes, die du zwingend im Design verwenden MUSST:
-- Primärfarbe (Haupttitel, prominente Akzente): ${primary || "#FACC15"}
-- Sekundärfarbe (Unterstützende Design-Linien, Trenner): ${secondary || "#78350F"}
-- Akzentfarbe (besondere Badges, kleine Highlights): ${accent || "#FEF08A"}
-- Hintergrundfarbe (body-background): ${actualBgColor}
-- Textfarbe (Haupttext): ${actualTextColor}`;
-      }
+      // 5-color palette details to inject
+      const pLight = primary_light || primary || "#FACC15";
+      const pDark = primary_dark || primary || "#1E3A8A";
+      const sLight = secondary_light || secondary || "#818CF8";
+      const sDark = secondary_dark || secondary || "#312E81";
+      const acc = accent || "#EC4899";
 
-      const contrastInstruction = isLightBg
-        ? `KONTRAST-SZENARIO: HELLER HINTERGRUND (Weiß/Hellgrau).
-- Verwende als Hintergrundfarbe (body-Background) exakt ein reines Weiß (${actualBgColor}) oder ein sehr helles Grau.
-- Alle Texte, Titel, Untertitel und Akzentlinien MÜSSEN dunkel sein (z.B. Haupttext in ${actualTextColor}, Titel in der Primärfarbe), um einen erstklassigen, barrierefreien Kontrast (mindestens 4.5:1) zu gewährleisten. Verwende helle Farben ausschließlich für extrem dezente, helle Boxen-Hintergründe.`
-        : `KONTRAST-SZENARIO: DUNKLER HINTERGRUND (Schwarz/Anthrazit).
-- Verwende als Hintergrundfarbe (body-Background) exakt ein sattes Schwarz (${actualBgColor}) oder ein tiefes Anthrazit.
-- Alle Texte, Titel und Linien MÜSSEN hell und leuchtend sein (z.B. Haupttext in ${actualTextColor}, Akzente in den hellen Primär-/Sekundärfarben), um einen erstklassigen, barrierefreien Kontrast (mindestens 4.5:1) auf dunklem Grund zu gewährleisten.`;
+      const paletteDescription = `Farbpalette: 5-Farben-Harmonie (Farbrad-basiert).
+Die exakten harmonischen CSS-Hex-Farbcodes, die du zwingend im Design verwenden MUSST, um erstklassigen, barrierefreien Kontrast (mindestens 4.5:1) auf JEDEM Hintergrundbereich (schwarz oder weiß) zu gewährleisten:
+1. Primärfarbe HELL (primary_light): ${pLight} -> Zu verwenden für Texte, Titel oder wichtige Angaben, die auf DUNKLEN oder SCHWARZEN Hintergrundbereichen platziert sind.
+2. Primärfarbe DUNKEL (primary_dark): ${pDark} -> Zu verwenden für Texte, Titel oder wichtige Angaben, die auf HELLEN oder WEISSEN Hintergrundbereichen platziert sind.
+3. Sekundärfarbe HELL (secondary_light): ${sLight} -> Zu verwenden für sekundäre Angaben, Linien, Beschriftungen oder Akzente auf DUNKLEN oder SCHWARZEN Hintergrundbereichen.
+4. Sekundärfarbe DUNKEL (secondary_dark): ${sDark} -> Zu verwenden für sekundäre Angaben, Linien, Beschriftungen oder Akzente auf HELLEN oder WEISSEN Hintergrundbereichen.
+5. Akzentfarbe (accent): ${acc} -> Ein flexibler, lebendiger Highlight-Farbcode für besondere Badges, kleine Markierungen oder Hervorhebungen.
+- Hintergrundfarbe des Haupt-Dokuments (body background): ${actualBgColor}
+- Textfarbe des Haupt-Dokuments (default text color): ${actualTextColor}`;
+
+      const contrastInstruction = `KONTRAST-SZENARIO & LOKALE HINTERGRUND-AUSRICHTUNG (ÄUSSERST WICHTIG):
+- Haupt-Hintergrundfarbe (body background): ${actualBgColor}
+- Haupt-Textfarbe (default text color): ${actualTextColor}
+- Jede Sektion, Spalte oder Zone MUSS die Farben strikt basierend auf ihrem EIGENEN, LOKALEN Hintergrund zuweisen, nicht nach dem globalen Modus!
+- Falls das Layout mehrspaltig ist und z. B. eine schwarze/dunkle Spalte (Sidebar) neben einer weißen/hellen Spalte hat:
+  * In der DUNKLEN Spalte dürfen AUSSCHLIESSLICH die hellen Farbcodes verwendet werden (primary_light: ${pLight}, secondary_light: ${sLight}, Akzent: ${acc}, helle Textfarbe: ${actualTextColor}). Dunkle Schrift oder dunkle Trennlinien sind dort strengstens verboten (Unleserlichkeit!).
+  * In der HELLEN Spalte dürfen AUSSCHLIESSLICH die dunklen Farbcodes verwendet werden (primary_dark: ${pDark}, secondary_dark: ${sDark}, Akzent: ${acc}, dunkle Textfarbe: ${actualTextColor}). Gelbe/orangefarbene oder weiße Titel auf hellem/weißem Grund sind absolut verboten!
+- REGEL FÜR BADGES, PILLS, CARDS (z. B. im Bereich Fähigkeiten/Kenntnisse):
+  * Jedes Badge, jede Pille oder Karte (alle Elemente mit Umrandung, Rand oder Hintergrund) MUSS zwingend so gestaltet sein, dass die UMRANDUNG (border-color) und der TEXTINHALT (color) die exakt identische Farbe verwenden! (z. B. \`border: 1px solid ${pLight}; color: ${pLight};\` in einer dunklen Sektion oder \`border: 1px solid ${pDark}; color: ${pDark};\` in einer hellen Sektion).
+  * Der Hintergrund solcher Badges/Pills darf NIEMALS eine kontrastarme, vollflächige Farbe besitzen (z. B. KEIN hellblaues Badge mit violetter Schrift!). Nutze stattdessen entweder einen transparenten Hintergrund (\`background: transparent;\`) oder eine dezent mit Opazität abgetönte Version der Randfarbe (z. B. \`background: rgba(..., 0.05);\`), damit der Sektionshintergrund durchscheint und der Kontrast gewahrt bleibt.
+- STRENGSTES HOVER-VERBOT:
+  * Du darfst im gesamten CSS absolut KEINE :hover Styles definieren, die bei Mausberührung (Mouse Over) die Textfarbe, Hintergrundfarbe oder Rahmenfarbe von Textelementen, Boxen, Badges oder Spalten verändern. Ein Hover-Effekt darf die Farben des Dokuments niemals manipulieren, da dies beim interaktiven Betrachten oder beim PDF-Export zu unlesbarem Text führt.`;
 
       // Setup system instructions matching the user requirements
       const systemInstruction = `Du agierst als mathematischer CSS-Architekt. Deine Aufgabe ist es, ein perfekt aufeinander abgestimmtes Set aus Lebenslauf und Motivationsschreiben als reines JSON auszugeben. 
@@ -1225,6 +1231,27 @@ Beschränke dich bei der visuellen Strukturierung auf exakt ZWEI umschaltbare Ph
 
 ### DOKUMENTEN-STRUKTUR & OUTPUT
 Generiere immer ein Set (Motivationsschreiben + Lebenslauf) in der identischen Design-DNA. Das Motivationsschreiben nutzt das primäre Geometrie-Element (Linie oder Kurve), der Lebenslauf erweitert dies modular in ein mehrspaltiges Layout.
+
+WICHTIGE STRUKTURVORGABEN FÜR DAS MOTIVATIONSSCHREIBEN (cover_letter):
+1. Das Motivationsschreiben MUSS zwingend auf exakt eine einzige DIN A4 Seite passen. Vermeide jeglichen Textüberlauf auf eine zweite Seite!
+2. KEIN FOTO IM MOTIVATIONSSCHREIBEN: Im Motivationsschreiben darf absolut NIEMALS ein Foto, Porträt, Bildrahmen oder der Avatar-Platzhalter ([AVATAR_PLACEHOLDER]) integriert sein! Das Foto ist ausschließlich für den Lebenslauf gedacht.
+3. TEXTKÜRZUNG AUF 3 ABSÄTZE: Um sicherzustellen, dass alles perfekt auf eine einzige A4-Seite passt, MUSS der Text des Motivationsschreibens auf genau drei kurze, prägnante Absätze aufgeteilt und gekürzt werden:
+   - Absatz 1 (Einleitung): Kurze Vorstellung und Interesse bekunden.
+   - Absatz 2 (Hauptteil): Stärken, relevante Erfahrung und Motivation auf den Punkt gebracht.
+   - Absatz 3 (Verabschiedung/Schlusssatz): Ausblick auf das Kennenlernen/Gespräch.
+4. Der formale Briefkopf und das Layout des Motivationsschreibens MÜSSEN je nach Spalten-Design des Lebenslaufs wie folgt gestaltet werden:
+   - OPTION A: Falls beim Lebenslauf 2 Spalten generiert werden (z. B. mit einer Seitenleiste), kann das Motivationsschreiben wie in beispiel1.pdf ebenfalls ein zweispaltiges Design with einer Seitenleiste links haben:
+     * Der Absender-Block (Name, Anschrift, E-Mail, Telefon) steht links in der schmalen Seitenleiste.
+     * Die rechte Hauptspalte enthält: Empfänger-Anschrift (linksbündig), Ort & Datum (rechtsbündig platziert), die fette Betreffzeile (linksbündig), gefolgt von Anrede, Fließtext (3 kurze Absätze), Grußformel und Unterschrift.
+   - OPTION B (Standard & Standard-Klassisch): Falls KEINE 2 Spalten bzw. Seitenleisten verwendet werden, MUSS das Layout exakt wie in beispiel2.pdf aufgebaut sein:
+     * Absender-Block (Vorname, Nachname, Anschrift, Telefon, E-Mail) ganz oben, linksbündig platziert.
+     * Darunter (mit passendem Abstand) die Empfänger-Anschrift linksbündig platziert (passend für Sichtfenster).
+     * Das Datum (z. B. "Ort, Datum" / "Frankfurt, 20.11.20XX") MUSS zwingend auf der rechten Seite (rechtsbündig) genau eine Zeile ÜBER der Betreffzeile platziert sein!
+     * Direkt darunter linksbündig die aussagekräftige, fette Betreffzeile (z. B. "Bewerbung als [Stellenbezeichnung]").
+     * Formelle, höfliche Anrede (z. B. "Sehr geehrte Damen und Herren," oder konkreter Name).
+     * Ein professioneller, auf den Punkt formulierter Fließtext aus genau 3 kurzen, prägnanten Absätzen, der mitsamt Briefkopf und Grußformel perfekt auf die eine A4-Seite passt.
+     * Professionelle Grußformel (z. B. "Mit freundlichen Grüßen") und Platz für die Unterschrift.
+5. Der gesamte Text in beiden Dokumenten (Sowohl Lebenslauf als auch Motivationsschreiben) MUSS für den Nutzer editierbar sein. Verwende daher im HTML-Code für das Haupt-Wrapper-Element oder den body das Attribut contenteditable="true" (z. B. <div class="..." contenteditable="true"> oder <body contenteditable="true">).
 
 Du fungierst als reine API. Du darfst AUSSCHLIESSLICH ein valides, parsebares JSON-Objekt ausgeben (KEIN Intro/Outro, KEINE Markdown-Code-Ticks).
 
@@ -1284,9 +1311,14 @@ Bitte richte dein CSS (z.B. Grid-Zonen, Flexbox-Ausrichtung, Spaltenaufteilung) 
 
       promptText += `\n\nACHTUNG - BENUTZER-BILD (PORTRAIT FOTO) / PLATZHALTER:
 Die KI soll einen definierten Rahmen/Platzhalter positionieren, in dem das Portrait-Foto des Benutzers später eingefügt wird. 
-Wenn du im HTML ein Bild (Foto-Platzhalter, Zone 'I' oder einen generellen Profilbild-Platzhalter) erstellst, MUSST du im src-Attribut exakt folgenden String verwenden:
+Dieses Bild/Foto darf NUR im Lebenslauf (resume) verwendet werden!
+Im Motivationsschreiben (cover_letter) darf absolut NIEMALS ein Foto, Bild, Porträt oder der Avatar-Platzhalter ([AVATAR_PLACEHOLDER]) eingebaut werden. Das Motivationsschreiben enthält kein Foto!
+Wenn du im HTML des Lebenslaufs ein Bild (Foto-Platzhalter, Zone 'I' oder einen generellen Profilbild-Platzhalter) erstellst, MUSST du im src-Attribut exakt folgenden String verwenden:
 src="[AVATAR_PLACEHOLDER]"
-Damit kann das System das Foto später dynamisch einfügen. Nutze keine Platzhalter-Bilder aus dem Internet (wie via.placeholder.com). Gestalte den Container für dieses Bild per CSS so, dass er auch leer gut aussieht (z.B. mit passender Hintergrundfarbe oder Rand).`;
+Damit kann das System das Foto später dynamisch einfügen. Nutze keine Platzhalter-Bilder aus dem Internet (wie via.placeholder.com). Gestalte den Container für dieses Bild per CSS so, dass er auch leer gut aussieht (z.B. mit passender Hintergrundfarbe oder Rand).
+
+ZUSÄTZLICHE BEWERBUNGS-KÜRZUNG:
+Kürze das Motivationsschreiben zwingend auf genau drei kurze Absätze (Einleitung, Hauptteil, Schlusssatz/Verabschiedung). Es ist ansonsten zu lang für eine A4-Seite.`;
 
       // Use the gemma model as strictly requested
       const resultText = await generateResilientContent(ai, "gemma-4-31b-it", promptText, {

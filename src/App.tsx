@@ -84,25 +84,31 @@ const InteractiveLoader = ({ mode }: { mode: "ats" | "motivation" | "redesign" }
     return () => clearInterval(interval);
   }, [steps.length]);
 
+  const colorClass = mode === "ats" 
+    ? { glow: "bg-emerald-500/20", border: "border-emerald-500/20 border-t-emerald-500", textIcon: "text-emerald-400", textDesc: "text-emerald-400", progress: "bg-emerald-500" }
+    : mode === "redesign"
+    ? { glow: "bg-yellow-500/20", border: "border-yellow-500/20 border-t-yellow-500", textIcon: "text-yellow-400", textDesc: "text-yellow-400", progress: "bg-yellow-500" }
+    : { glow: "bg-blue-500/20", border: "border-blue-500/20 border-t-blue-500", textIcon: "text-blue-400", textDesc: "text-blue-400", progress: "bg-blue-500" };
+
   return (
     <div className="h-full flex flex-col items-center justify-center text-center py-20 px-6 space-y-6">
       <div className="relative">
         {/* Glowing circle animation */}
-        <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-xl animate-ping duration-1000"></div>
-        <div className="w-16 h-16 rounded-full border-4 border-blue-500/20 border-t-blue-500 animate-spin flex items-center justify-center relative z-10">
-          <Sparkles className="h-6 w-6 text-blue-400 animate-pulse" />
+        <div className={`absolute inset-0 rounded-full ${colorClass.glow} blur-xl animate-ping duration-1000`}></div>
+        <div className={`w-16 h-16 rounded-full border-4 ${colorClass.border} animate-spin flex items-center justify-center relative z-10`}>
+          <Sparkles className={`h-6 w-6 ${colorClass.textIcon} animate-pulse`} />
         </div>
       </div>
       <div className="space-y-3 max-w-sm">
         <h4 className="text-sm font-bold text-white tracking-wide uppercase">
           KI-Verarbeitung läuft
         </h4>
-        <p className="text-xs text-blue-400 font-mono min-h-[32px] flex items-center justify-center leading-normal">
+        <p className={`text-xs ${colorClass.textDesc} font-mono min-h-[32px] flex items-center justify-center leading-normal`}>
           {steps[loadingStep]}
         </p>
         <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mt-3">
           <div 
-            className="bg-blue-500 h-full transition-all duration-1000 ease-out"
+            className={`${colorClass.progress} h-full transition-all duration-1000 ease-out`}
             style={{ width: `${((loadingStep + 1) / steps.length) * 100}%` }}
           />
         </div>
@@ -481,6 +487,13 @@ export default function App() {
   } | null>(null);
   const [redesignSelectedDoc, setRedesignSelectedDoc] = useState<"resume" | "cover_letter">("resume");
   const [rawRedesignJsonText, setRawRedesignJsonText] = useState("");
+  const [appliedColors, setAppliedColors] = useState<{
+    resume: { primary: string; secondary: string; accent: string; bg: string; text: string };
+    cover_letter: { primary: string; secondary: string; accent: string; bg: string; text: string };
+  }>({
+    resume: { primary: '#FACC15', secondary: '#78350F', accent: '#FEF08A', bg: '#000000', text: '#F8FAFC' },
+    cover_letter: { primary: '#FACC15', secondary: '#78350F', accent: '#FEF08A', bg: '#000000', text: '#F8FAFC' }
+  });
 
   // --- Manual Style Sketchpad States ---
   const [isManualSketchOpen, setIsManualSketchOpen] = useState(false);
@@ -683,6 +696,38 @@ export default function App() {
     return `#${f(0)}${f(8)}${f(4)}`.toUpperCase();
   };
 
+  // Automatically adjust lightness of HSL color to guarantee contrast ratio >= targetRatio (e.g., 4.5)
+  const adjustHslForContrast = (h: number, s: number, initialL: number, bgType: "dark" | "light", targetRatio: number = 4.52): number => {
+    const isLightBg = bgType === "light";
+    const bgRgb = isLightBg ? "#FFFFFF" : "#121212";
+    
+    // Check initial lightness first
+    const initialHex = hslToHex(h, s, initialL);
+    if (calculateContrastRatio(initialHex, bgRgb) >= targetRatio) {
+      return initialL;
+    }
+    
+    if (isLightBg) {
+      // Light background: we need a darker color (lower L)
+      for (let l = initialL - 1; l >= 0; l--) {
+        const hex = hslToHex(h, s, l);
+        if (calculateContrastRatio(hex, bgRgb) >= targetRatio) {
+          return l;
+        }
+      }
+      return 0; // Black fallback
+    } else {
+      // Dark background: we need a lighter color (higher L)
+      for (let l = initialL + 1; l <= 100; l++) {
+        const hex = hslToHex(h, s, l);
+        if (calculateContrastRatio(hex, bgRgb) >= targetRatio) {
+          return l;
+        }
+      }
+      return 100; // White fallback
+    }
+  };
+
   // Compute active colors based on chosen palette, base hue, and background type
   const getPaletteColors = (
     hue: number, 
@@ -691,32 +736,74 @@ export default function App() {
   ) => {
     const isLightBg = bgType === "light";
     
-    // For light backgrounds, we want darker colors (lower lightness, e.g. 35%). 
-    // For dark backgrounds, we want brighter colors (higher lightness, e.g. 55%).
-    const primaryL = isLightBg ? 32 : 55;
-    const secondaryL = isLightBg ? 30 : 45;
-    const accentL = isLightBg ? 35 : 60;
+    // Default base lightness levels
+    const primaryL_lightBg = 32;
+    const secondaryL_lightBg = 30;
+    const accentL_lightBg = 35;
+
+    const primaryL_darkBg = 55;
+    const secondaryL_darkBg = 45;
+    const accentL_darkBg = 60;
+
+    const targetRatio = 4.52; // slightly higher than 4.5 to ensure it passes the checker and is fully accessible
+
+    let secondaryHue = hue;
+    let accentHue = hue;
+    let secSat_light = 95;
+    let secSat_dark = 95;
+    let accSat_light = 100;
+    let accSat_dark = 100;
 
     if (paletteType === "split_complementary") {
-      return {
-        primary: hslToHex(hue, 100, primaryL),
-        secondary: hslToHex((hue + 150) % 360, 90, secondaryL),
-        accent: hslToHex((hue + 210) % 360, 95, accentL)
-      };
+      secondaryHue = (hue + 150) % 360;
+      accentHue = (hue + 210) % 360;
+      secSat_light = 90;
+      secSat_dark = 90;
+      accSat_light = 95;
+      accSat_dark = 95;
     } else if (paletteType === "triadic") {
-      return {
-        primary: hslToHex(hue, 100, primaryL),
-        secondary: hslToHex((hue + 120) % 360, 90, secondaryL),
-        accent: hslToHex((hue + 240) % 360, 95, accentL)
-      };
-    } else {
-      // monochromatic
-      return {
-        primary: hslToHex(hue, 100, primaryL),
-        secondary: isLightBg ? hslToHex(hue, 95, 20) : hslToHex(hue, 95, 30), // rich golden-amber shadow
-        accent: isLightBg ? hslToHex(hue, 100, 42) : hslToHex(hue, 100, 75) // light pastel highlights
-      };
+      secondaryHue = (hue + 120) % 360;
+      accentHue = (hue + 240) % 360;
+      secSat_light = 90;
+      secSat_dark = 90;
+      accSat_light = 95;
+      accSat_dark = 95;
     }
+
+    // Now calculate colors for both light background and dark background to offer all 5!
+    // 1. Primary Light (optimized for dark/black backgrounds)
+    const pL_light = adjustHslForContrast(hue, 100, primaryL_darkBg, "dark", targetRatio);
+    const primary_light = hslToHex(hue, 100, pL_light);
+
+    // 2. Primary Dark (optimized for light/white backgrounds)
+    const pL_dark = adjustHslForContrast(hue, 100, primaryL_lightBg, "light", targetRatio);
+    const primary_dark = hslToHex(hue, 100, pL_dark);
+
+    // 3. Secondary Light (optimized for dark/black backgrounds)
+    const sL_light = adjustHslForContrast(secondaryHue, secSat_dark, paletteType === "monochromatic" ? 30 : secondaryL_darkBg, "dark", targetRatio);
+    const secondary_light = hslToHex(secondaryHue, secSat_dark, sL_light);
+
+    // 4. Secondary Dark (optimized for light/white backgrounds)
+    const sL_dark = adjustHslForContrast(secondaryHue, secSat_light, paletteType === "monochromatic" ? 20 : secondaryL_lightBg, "light", targetRatio);
+    const secondary_dark = hslToHex(secondaryHue, secSat_light, sL_dark);
+
+    // 5. Accent (adjusted dynamically for current background type)
+    const aL = adjustHslForContrast(accentHue, accSat_light, isLightBg ? (paletteType === "monochromatic" ? 42 : accentL_lightBg) : (paletteType === "monochromatic" ? 75 : accentL_darkBg), bgType, targetRatio);
+    const accent = hslToHex(accentHue, accSat_light, aL);
+
+    // For compatibility with any legacy fields (primary, secondary mapping depending on current selected background type)
+    const primary = isLightBg ? primary_dark : primary_light;
+    const secondary = isLightBg ? secondary_dark : secondary_light;
+
+    return {
+      primary,
+      secondary,
+      accent,
+      primary_light,
+      primary_dark,
+      secondary_light,
+      secondary_dark
+    };
   };
 
   const activeColors = getPaletteColors(redesignBaseHue, redesignPalette, redesignBackgroundType);
@@ -742,8 +829,9 @@ export default function App() {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left - rect.width / 2;
     const y = e.clientY - rect.top - rect.height / 2;
-    let angle = Math.atan2(y, x) * (180 / Math.PI);
+    let angle = Math.atan2(y, x) * (180 / Math.PI) + 90;
     if (angle < 0) angle += 360;
+    if (angle >= 360) angle -= 360;
     setRedesignBaseHue(Math.round(angle));
   };
 
@@ -902,6 +990,7 @@ export default function App() {
   });
   const [activeLetterSection, setActiveLetterSection] = useState<'all' | 'briefkopf' | 'betreff' | 'anschreiben'>('all');
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const prevColorsRef = useRef({ primary: '#3b82f6', secondary: '#1e293b', accent: '#f59e0b' });
   const [generatedLetterHtml, setGeneratedLetterHtml] = useState("");
 
   const letterStats = useMemo(() => {
@@ -958,6 +1047,16 @@ export default function App() {
       }
     }
     if (finalHtml) {
+      // Strip out contenteditable attributes so the downloaded file is a clean static HTML file with no edit behaviors
+      finalHtml = finalHtml.replace(/\s*contenteditable=(['"])[^'"]*\1/gi, "");
+      finalHtml = finalHtml.replace(/\s*contenteditable/gi, "");
+
+      // Strip out custom editable element CSS styling blocks entirely
+      finalHtml = finalHtml.replace(/\/\* Custom editable element styling.*?\*\/[^<]*/gs, "");
+      finalHtml = finalHtml.replace(/\[contenteditable=[^\]]+\]\s*\{[^}]*\}/gi, "");
+      finalHtml = finalHtml.replace(/\[contenteditable=[^\]]+\]:hover\s*\{[^}]*\}/gi, "");
+      finalHtml = finalHtml.replace(/\[contenteditable=[^\]]+\]:focus\s*\{[^}]*\}/gi, "");
+
       const blob = new Blob([finalHtml], { type: "text/html" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -1683,6 +1782,50 @@ export default function App() {
     }
   }, [highlightContrastFailures, contrastIssues, hasCheckedContrast]);
 
+  const setupIframeListeners = () => {
+    const iframe = redesignIframeRef.current;
+    if (!iframe) return;
+
+    try {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (!iframeDoc) return;
+
+      const body = iframeDoc.body;
+      if (!body) return;
+
+      body.setAttribute("contenteditable", isEditingEnabled ? "true" : "false");
+
+      const handleSync = () => {
+        const updatedHtml = body.innerHTML;
+        setRedesignResult(prev => {
+          if (!prev) return prev;
+          const currentStyle = prev[redesignSelectedStyle];
+          if (!currentStyle) return prev;
+          return {
+            ...prev,
+            [redesignSelectedStyle]: {
+              ...currentStyle,
+              [redesignSelectedDoc]: {
+                ...currentStyle[redesignSelectedDoc],
+                html: updatedHtml
+              }
+            }
+          };
+        });
+      };
+
+      body.removeEventListener("blur", handleSync);
+      body.addEventListener("blur", handleSync);
+    } catch (e) {
+      console.warn("Iframe listener setup failed:", e);
+    }
+  };
+
+  const handleIframeLoad = () => {
+    runContrastCheck();
+    setupIframeListeners();
+  };
+
   // API Call for Gelb-Schwarz-Redesign using Gemma (Dual-Stil orthogonal + kurvlinear)
   const sendRedesignToAI = async () => {
     const textToSend = redesignMaskedText || redesignExtractedText;
@@ -1703,11 +1846,15 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           cvText: textToSend,
-          style: "orthogonal", // We keep one style identifier
+          style: redesignStyle, // pass the user-selected style ("orthogonal" or "kurvlinear")
           palette: redesignPalette,
           primary: colors.primary,
           secondary: colors.secondary,
           accent: colors.accent,
+          primary_light: colors.primary_light,
+          primary_dark: colors.primary_dark,
+          secondary_light: colors.secondary_light,
+          secondary_dark: colors.secondary_dark,
           backgroundType: redesignBackgroundType,
           manualSketchGrid: (isManualSketchOpen && useSketchInAi && sketchGridString.trim()) ? sketchGridString : undefined
         })
@@ -1715,7 +1862,7 @@ export default function App() {
       if (!result.ok) {
         throw new Error(`Fehler beim Redesign: ${result.statusText}`);
       }
-      const orthoResult = await result.json();
+      const styleResult = await result.json();
 
       // De-mask placeholders in HTML/CSS before storing for final rendering
       const deMaskString = (str: string | undefined | null) => {
@@ -1736,25 +1883,121 @@ export default function App() {
       };
 
       const finalResult = {
-        orthogonal: {
+        [redesignStyle]: {
           resume: {
-            html: deMaskString(orthoResult.resume?.html),
-            css: deMaskString(orthoResult.resume?.css)
+            html: deMaskString(styleResult.resume?.html),
+            css: deMaskString(styleResult.resume?.css)
           },
           cover_letter: {
-            html: deMaskString(orthoResult.cover_letter?.html),
-            css: deMaskString(orthoResult.cover_letter?.css)
+            html: deMaskString(styleResult.cover_letter?.html),
+            css: deMaskString(styleResult.cover_letter?.css)
           }
         }
       };
 
       setRedesignResult(finalResult);
+      const isLightBg = redesignBackgroundType === "light";
+      const actualBgColor = isLightBg ? "#FFFFFF" : "#000000";
+      const actualTextColor = isLightBg ? "#1E293B" : "#F8FAFC";
+      setAppliedColors({
+        resume: { 
+          primary: colors.primary, 
+          secondary: colors.secondary, 
+          accent: colors.accent,
+          bg: actualBgColor,
+          text: actualTextColor
+        },
+        cover_letter: { 
+          primary: colors.primary, 
+          secondary: colors.secondary, 
+          accent: colors.accent,
+          bg: actualBgColor,
+          text: actualTextColor
+        }
+      });
+      prevColorsRef.current = { ...colors };
       setRawRedesignJsonText(JSON.stringify(finalResult, null, 2));
     } catch (err: any) {
       setApiError("Fehler beim Erstellen des Redesigns: " + err.message);
     } finally {
       setIsRedesignSending(false);
     }
+  };
+
+  const applyColorWheelToCss = () => {
+    const currentStyle = redesignResult?.[redesignSelectedStyle];
+    if (!currentStyle) {
+      alert("Bitte generieren Sie zuerst ein Design, bevor Sie Farben anpassen!");
+      return;
+    }
+
+    const docType = redesignSelectedDoc; // "resume" or "cover_letter"
+    const docData = currentStyle[docType];
+    if (!docData) return;
+
+    let updatedCss = docData.css;
+
+    // Retrieve what was last applied (either initial or from previous adjustments)
+    const oldPrimary = appliedColors[docType].primary;
+    const oldSecondary = appliedColors[docType].secondary;
+    const oldAccent = appliedColors[docType].accent;
+    const oldBg = appliedColors[docType].bg;
+    const oldText = appliedColors[docType].text;
+
+    // Compute the new values selected from the wheel/palette
+    const colors = getPaletteColors(redesignBaseHue, redesignPalette, redesignBackgroundType);
+    const isLightBg = redesignBackgroundType === "light";
+    const newBg = isLightBg ? "#FFFFFF" : "#000000";
+    const newText = isLightBg ? "#1E293B" : "#F8FAFC";
+
+    // Dynamic case-insensitive regex swaps for each color channel
+    if (oldPrimary && oldPrimary.toLowerCase() !== colors.primary.toLowerCase()) {
+      updatedCss = updatedCss.replace(new RegExp(oldPrimary, 'gi'), colors.primary);
+    }
+    if (oldSecondary && oldSecondary.toLowerCase() !== colors.secondary.toLowerCase()) {
+      updatedCss = updatedCss.replace(new RegExp(oldSecondary, 'gi'), colors.secondary);
+    }
+    if (oldAccent && oldAccent.toLowerCase() !== colors.accent.toLowerCase()) {
+      updatedCss = updatedCss.replace(new RegExp(oldAccent, 'gi'), colors.accent);
+    }
+    if (oldBg && oldBg.toLowerCase() !== newBg.toLowerCase()) {
+      updatedCss = updatedCss.replace(new RegExp(oldBg, 'gi'), newBg);
+    }
+    if (oldText && oldText.toLowerCase() !== newText.toLowerCase()) {
+      updatedCss = updatedCss.replace(new RegExp(oldText, 'gi'), newText);
+    }
+
+    // Update state so the view refreshes with the modified CSS
+    setRedesignResult(prev => {
+      if (!prev) return prev;
+      const curStyle = prev[redesignSelectedStyle];
+      if (!curStyle) return prev;
+      return {
+        ...prev,
+        [redesignSelectedStyle]: {
+          ...curStyle,
+          [docType]: {
+            ...curStyle[docType],
+            css: updatedCss
+          }
+        }
+      };
+    });
+
+    // Update applied colors tracking for this document
+    setAppliedColors(prev => ({
+      ...prev,
+      [docType]: {
+        primary: colors.primary,
+        secondary: colors.secondary,
+        accent: colors.accent,
+        bg: newBg,
+        text: newText
+      }
+    }));
+
+    prevColorsRef.current = { ...colors };
+    alert("Das neue mathematische Farbschema wurde erfolgreich in Ihren CSS-Quellcode injiziert!");
   };
 
   // --- API process-resume for ATS Mode ---
@@ -1989,45 +2232,65 @@ export default function App() {
       <div className="absolute top-0 left-0 right-0 h-[500px] bg-gradient-to-b from-blue-500/10 via-indigo-500/5 to-transparent pointer-events-none z-0"></div>
 
       {/* Navigation Header */}
-      <header className="relative border-b border-slate-800 bg-slate-900/80 backdrop-blur-md z-10">
+      <header className="relative border-b border-slate-800 bg-slate-900/80 backdrop-blur-md z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-lg shadow-blue-500/20">
-              <ShieldCheck className="h-6 w-6" />
+            <div className="relative group z-[100]">
+              <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border-2 border-slate-700/50 group-hover:border-emerald-500/50 transition-colors cursor-pointer bg-slate-800 flex items-center justify-center shadow-lg">
+                <img src="/logo.png" alt="Lazy-HR-Workaround Logo" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('bg-emerald-600') }} />
+                <ShieldCheck className="h-8 w-8 text-white absolute -z-10" />
+              </div>
+              
+              <div className="absolute top-24 sm:top-28 left-0 w-80 sm:w-96 bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 pointer-events-none origin-top-left z-[100]">
+                <img src="/logo.png" alt="Lazy-HR-Workaround Original" className="w-full h-auto rounded-lg mb-3 border border-slate-800" onError={(e) => e.currentTarget.style.display = 'none'} />
+                
+                <h4 className="font-bold text-slate-100 text-sm mb-2 leading-tight">Lazy-HR-Workaround: Intelligente Automatisierung für deinen Bewerbungserfolg</h4>
+                <div className="space-y-2 text-[11px] text-slate-300 leading-relaxed">
+                  <p>Schluss mit frustrierenden Bewerbungsprozessen und ungesehenen Anschreiben! Moderne Unternehmen nutzen Algorithmen, um Profile zu filtern – oft auf Kosten der Menschlichkeit. Lazy-HR-Workaround dreht den Spieß um und schlägt die Systeme mit ihren eigenen Waffen.</p>
+                  <p>Diese App ist die Brücke zwischen deinem Talent und den automatisierten Recruiting-Plattformen (ATS) der Konzerne. Statt unzählige Stunden in starre Formulare und künstlich wirkende Anschreiben zu stecken, optimiert und synchronisiert Lazy-HR-Workaround deine Daten im Hintergrund. Wir liefern den HR-Parsern exakt die strukturierten Payloads und Formate, nach denen sie suchen.</p>
+                  <p className="font-semibold text-slate-200 mt-3 border-t border-slate-800 pt-2">Deine Vorteile auf einen Blick:</p>
+                  <ul className="list-disc pl-4 space-y-1.5 text-slate-300">
+                    <li><strong className="text-emerald-400">Maximale Effizienz:</strong> Überspringe den Ineffizienz-Ballast klassischer Online-Bewerbungen.</li>
+                    <li><strong className="text-emerald-400">Perfekte Parser-Kompatibilität:</strong> Deine Daten kommen garantiert genau so an, dass der Algorithmus dich positiv bewertet.</li>
+                    <li><strong className="text-emerald-400">Prozess-Optimierung:</strong> Überlass das fehleranfällige System-Füttern einer vollautomatischen Architektur und konzentriere dich auf das, was wirklich zählt: das persönliche Gespräch.</li>
+                  </ul>
+                  <p className="italic text-emerald-400 mt-3 pt-2 border-t border-slate-800 font-medium">Schluss mit dem HR-Frust. Lass die Maschinen für dich arbeiten!</p>
+                </div>
+              </div>
             </div>
             <div>
-              <h1 className="text-lg font-bold tracking-tight font-display text-white">
-                Privacy-First ATS Transformer
+              <h1 className="text-xl sm:text-3xl font-bold tracking-tight font-display text-white">
+                Lazy-HR-Workaround
               </h1>
-              <p className="text-[10px] text-slate-400">
-                Lokale DSGVO-Maskierung & KI-Optimierung
+              <p className="text-xs sm:text-sm text-slate-400 mt-1">
+                Intelligente Automatisierung für deinen Bewerbungserfolg
               </p>
             </div>
           </div>
 
-          <div className="flex flex-row items-center gap-1 bg-slate-800/80 p-1.5 rounded-xl border border-slate-700/50 w-full sm:w-auto overflow-x-auto snap-x">
+          <div className="flex flex-row items-center gap-2 bg-slate-800/80 p-2 rounded-xl border border-slate-700/50 w-full lg:w-auto overflow-x-auto snap-x mt-4 sm:mt-0">
             <button
               onClick={() => setActiveMode("ats")}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "ats" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"}`}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "ats" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"}`}
               id="tab-mode-ats"
             >
-              <Layers className="h-3.5 w-3.5 shrink-0" />
+              <Layers className="h-4 w-4 shrink-0" />
               ATS-Optimierung
             </button>
             <button
               onClick={() => setActiveMode("motivation")}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "motivation" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200"}`}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "motivation" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"}`}
               id="tab-mode-motivation"
             >
-              <Briefcase className="h-3.5 w-3.5 shrink-0" />
+              <Briefcase className="h-4 w-4 shrink-0" />
               Motivationsschreiben
             </button>
             <button
               onClick={() => setActiveMode("redesign")}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "redesign" ? "bg-yellow-500 text-slate-950 shadow-sm" : "text-slate-400 hover:text-slate-200"}`}
+              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "redesign" ? "bg-yellow-500 text-slate-950 shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"}`}
               id="tab-mode-redesign"
             >
-              <Sparkles className="h-3.5 w-3.5 shrink-0" />
+              <Sparkles className="h-4 w-4 shrink-0" />
               Redesign Workflow
             </button>
           </div>
@@ -2050,7 +2313,7 @@ export default function App() {
             }`}>
               <div className="border-b border-slate-800 pb-3">
                 <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                  <Layers className={`h-4 w-4 ${unreadableType === "ats" ? "text-red-400 animate-pulse" : "text-blue-400"}`} />
+                  <Layers className={`h-4 w-4 ${unreadableType === "ats" ? "text-red-400 animate-pulse" : "text-emerald-400"}`} />
                   ATS-Optimierung Workflow
                 </h3>
                 <p className="text-[11px] text-slate-400 mt-1">
@@ -2064,7 +2327,7 @@ export default function App() {
                   <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
                     unreadableType === "ats" 
                       ? "bg-red-600/20 text-red-400 border-red-500/30" 
-                      : "bg-blue-600/20 text-blue-400 border-blue-500/30"
+                      : "bg-emerald-600/20 text-emerald-400 border-emerald-500/30"
                   }`}>1</span>
                   <label className="block text-xs font-semibold text-slate-300">
                     Lebenslauf einfügen (PDF oder Bild)
@@ -2114,7 +2377,7 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="border-2 border-dashed border-slate-700 hover:border-blue-500/50 rounded-xl p-4 text-center transition bg-slate-950/40 relative cursor-pointer">
+                  <div className="border-2 border-dashed border-slate-700 hover:border-emerald-500/50 rounded-xl p-4 text-center transition bg-slate-950/40 relative cursor-pointer">
                     <input
                       type="file"
                       accept="application/pdf,image/*"
@@ -2133,7 +2396,7 @@ export default function App() {
                 )}
 
                 {isAtsExtracting && (
-                  <div className="flex items-center justify-center gap-2 py-2 text-xs text-blue-400">
+                  <div className="flex items-center justify-center gap-2 py-2 text-xs text-emerald-400">
                     <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                     Lese Lebenslauf ein...
                   </div>
@@ -2173,14 +2436,14 @@ export default function App() {
                               <div className="space-y-1">
                                 <div className="flex justify-between text-[10px] font-medium">
                                   <span className="text-slate-400 flex items-center gap-1">
-                                    <Target className="h-3 w-3 text-blue-400" />
+                                    <Target className="h-3 w-3 text-emerald-400" />
                                     Keyword-Dichte
                                   </span>
                                   <span className="text-slate-200 font-bold">{Math.round((metrics.keywordScore / 35) * 100)}%</span>
                                 </div>
                                 <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
                                   <div 
-                                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-1000" 
+                                    className="bg-emerald-500 h-1.5 rounded-full transition-all duration-1000" 
                                     style={{ width: `${(metrics.keywordScore / 35) * 100}%` }}
                                   />
                                 </div>
@@ -2256,10 +2519,10 @@ export default function App() {
                                 className="w-full flex items-center justify-between text-[11px] font-bold text-slate-300 hover:text-white transition"
                               >
                                 <span className="flex items-center gap-1">
-                                  <Info className="h-3.5 w-3.5 text-blue-400 animate-pulse" />
+                                  <Info className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
                                   Detaillierte Optimierungsvorschläge ({metrics.suggestions.length})
                                 </span>
-                                <span className="text-[10px] text-blue-400">
+                                <span className="text-[10px] text-emerald-400">
                                   {showAtsSuggestions ? "Ausblenden" : "Einblenden"}
                                 </span>
                               </button>
@@ -2286,7 +2549,7 @@ export default function App() {
               {/* SCHRITT 2 */}
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-bold border border-blue-500/30">2</span>
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">2</span>
                   <label className="block text-xs font-semibold text-slate-300">
                     Namen eingeben
                   </label>
@@ -2297,7 +2560,7 @@ export default function App() {
                     value={manualNames}
                     onChange={(e) => setManualNames(e.target.value)}
                     placeholder="Vorname Nachname, z.B. Max Mustermann"
-                    className="w-full text-xs bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    className="w-full text-xs bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
                     id="manual-names-input"
                   />
                   <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
@@ -2312,7 +2575,7 @@ export default function App() {
               {/* SCHRITT 3 */}
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-bold border border-blue-500/30">3</span>
+                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">3</span>
                   <label className="block text-xs font-semibold text-slate-300">
                     Anonymisieren Button
                   </label>
@@ -2338,7 +2601,7 @@ export default function App() {
                       <span className="font-semibold text-slate-400 text-[11px]">Vorschau des anonymisierten Payloads:</span>
                       <button
                         onClick={() => triggerCopy(atsMaskedText, "masked-cv")}
-                        className="text-blue-400 hover:text-blue-300 transition flex items-center gap-1 text-[10px]"
+                        className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 text-[10px]"
                       >
                         {copiedSection === "masked-cv" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                         {copiedSection === "masked-cv" ? "Kopiert" : "Kopieren"}
@@ -2347,7 +2610,7 @@ export default function App() {
                     <textarea
                       value={atsMaskedText}
                       onChange={(e) => setAtsMaskedText(e.target.value)}
-                      className="w-full h-32 bg-slate-950 text-slate-300 border border-slate-800 rounded-lg p-2.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                      className="w-full h-32 bg-slate-950 text-slate-300 border border-slate-800 rounded-lg p-2.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                       id="ai-cv-textarea"
                     />
                   </motion.div>
@@ -2358,7 +2621,7 @@ export default function App() {
               <div className="pt-4 border-t border-slate-800/80 space-y-3">
                 <div className="bg-slate-950/60 rounded-xl border border-slate-800/50 p-3 space-y-1.5">
                   <div className="flex items-center gap-1.5 text-slate-300">
-                    <Sparkles className="h-3.5 w-3.5 text-blue-400 animate-pulse" />
+                    <Sparkles className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
                     <span className="text-[11px] font-bold tracking-tight text-white">Gemma-KI-Engine (Aktiv)</span>
                   </div>
                   <p className="text-[10px] text-slate-400 leading-normal">
@@ -2369,7 +2632,7 @@ export default function App() {
                 <button
                   onClick={sendAtsToAI}
                   disabled={isAtsSending || !atsRawExtractedText}
-                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-blue-600/15 flex items-center justify-center gap-2"
+                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/15 flex items-center justify-center gap-2"
                   id="btn-process-cv-ai"
                 >
                   {isAtsSending ? (
@@ -2711,6 +2974,13 @@ export default function App() {
                       </div>
                     </div>
 
+                    <div className="bg-emerald-950/20 border border-emerald-500/20 rounded-xl p-3 flex items-start gap-2 shadow-sm">
+                      <ShieldCheck className="h-4.5 w-4.5 text-emerald-400 shrink-0 mt-0.5" />
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        <strong>DSGVO-konform:</strong> Ihr Portrait-Foto wird ausschließlich lokal im Browser verarbeitet (Client-side Base64-Konvertierung) und niemals an externe KI-Server übertragen oder dort gespeichert.
+                      </p>
+                    </div>
+
                     {isRedesignExtracting && (
                       <span className="text-[10px] text-yellow-400 flex items-center gap-1 justify-center">
                         <RefreshCw className="h-3 w-3 animate-spin" /> Lebenslauf wird analysiert...
@@ -2793,231 +3063,76 @@ export default function App() {
                 )}
               </div>
 
-              {/* SCHRITT 4: INTERAKTIVES FARBENRAD & MATHEMATISCHE FARBHARMONIE */}
-              <div className="space-y-4">
+              {/* SCHRITT 4: DESIGN-STIL WÄHLEN */}
+              <div className="space-y-3">
                 <div className="flex items-center gap-2">
                   <span className="flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-bold border border-yellow-500/30">4</span>
                   <label className="block text-xs font-semibold text-slate-300">
-                    Interaktives Farbenrad & Farbharmonie
+                    Design-Stil wählen
                   </label>
                 </div>
-
-                <div className="bg-emerald-500/5 border border-emerald-500/25 rounded-xl p-3 space-y-1.5">
-                  <span className="text-emerald-400 font-bold text-xs flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    Farbenrad aktiv
-                  </span>
-                  <p className="text-[10px] text-slate-400 leading-normal">
-                    Klicken oder ziehen Sie im Kreis, um die mathematische Basis-Farbe zu wählen. Die harmonischen Begleitfarben werden basierend auf dem gewählten Algorithmus berechnet und für Ihr Redesign verwendet.
-                  </p>
-                </div>
-
-                {/* Mathematical Interactive Color Wheel */}
-                <div className="bg-slate-950/40 border border-slate-800 rounded-2xl p-4 flex flex-col items-center space-y-4 shadow-inner relative overflow-hidden">
-                  
-                  {/* Wheel container */}
-                  <div 
-                    className="relative w-40 h-40 select-none touch-none cursor-crosshair opacity-100"
-                    onPointerDown={handlePointerDown}
-                    onPointerMove={handlePointerMove}
-                    onPointerUp={handlePointerUp}
+                
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRedesignStyle("orthogonal");
+                      setRedesignSelectedStyle("orthogonal");
+                      setIsManualSketchOpen(false);
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
+                      (redesignStyle === "orthogonal" && !isManualSketchOpen)
+                        ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
+                        : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                    }`}
                   >
-                    {/* Conic Gradient Color Spectrum Ring */}
-                    <div 
-                      className="w-full h-full rounded-full border border-slate-800/80 shadow-lg flex items-center justify-center relative overflow-hidden"
-                      style={{
-                        background: "conic-gradient(from 0deg, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)",
-                      }}
-                    >
-                      {/* Dark Inner Mask to form a ring */}
-                      <div className="w-24 h-24 rounded-full bg-slate-950 border border-slate-900/80 shadow-inner flex flex-col items-center justify-center z-10 pointer-events-none">
-                        <span className="text-[9px] text-slate-500 font-sans uppercase tracking-widest font-extrabold">
-                          {redesignPalette === "split_complementary" ? "Split" : redesignPalette === "triadic" ? "Triade" : "Monochrom"}
-                        </span>
-                        <span className="text-sm font-extrabold font-mono text-yellow-400 mt-0.5">{redesignBaseHue}°</span>
-                      </div>
-                    </div>
+                    <span className="text-[9px] font-extrabold block leading-tight">STRUKTURIERT</span>
+                    <span className="text-[8px] text-slate-400 leading-snug">
+                      Geradlinig, orthogonal & klar aufgeteilt.
+                    </span>
+                  </button>
 
-                    {/* SVG overlay for math vectors & handles */}
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-20">
-                      {(() => {
-                        const getCoords = (hAngle: number) => {
-                          const rad = (hAngle * Math.PI) / 180;
-                          return {
-                            x: 80 + 62 * Math.cos(rad),
-                            y: 80 + 62 * Math.sin(rad)
-                          };
-                        };
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRedesignStyle("kurvlinear");
+                      setRedesignSelectedStyle("kurvlinear");
+                      setIsManualSketchOpen(false);
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
+                      (redesignStyle === "kurvlinear" && !isManualSketchOpen)
+                        ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
+                        : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    <span className="text-[9px] font-extrabold block leading-tight">KREATIV / CURVE</span>
+                    <span className="text-[8px] text-slate-400 leading-snug">
+                      Asymmetrisch, kurvig & geschwungen.
+                    </span>
+                  </button>
 
-                        const pt1 = getCoords(redesignBaseHue);
-                        const pt2 = getCoords(redesignPalette === "split_complementary" ? (redesignBaseHue + 150) % 360 : redesignPalette === "triadic" ? (redesignBaseHue + 120) % 360 : redesignBaseHue);
-                        const pt3 = getCoords(redesignPalette === "split_complementary" ? (redesignBaseHue + 210) % 360 : redesignPalette === "triadic" ? (redesignBaseHue + 240) % 360 : redesignBaseHue);
-
-                        return (
-                          <>
-                            {/* Vectors / Connections */}
-                            {redesignPalette === "monochromatic" ? (
-                              <line x1="80" y1="80" x2={pt1.x} y2={pt1.y} stroke={activeColors.primary} strokeWidth="2" strokeDasharray="3,3" />
-                            ) : (
-                              <polygon 
-                                points={`${pt1.x},${pt1.y} ${pt2.x},${pt2.y} ${pt3.x},${pt3.y}`} 
-                                fill={`${activeColors.primary}0B`} 
-                                stroke={activeColors.primary} 
-                                strokeWidth="2" 
-                                className="opacity-80"
-                              />
-                            )}
-
-                            {/* Lines from center to handles */}
-                            <line x1="80" y1="80" x2={pt1.x} y2={pt1.y} stroke={activeColors.primary} strokeWidth="1.5" className="opacity-40" />
-                            {redesignPalette !== "monochromatic" && (
-                              <>
-                                <line x1="80" y1="80" x2={pt2.x} y2={pt2.y} stroke={activeColors.secondary} strokeWidth="1" className="opacity-30" />
-                                <line x1="80" y1="80" x2={pt3.x} y2={pt3.y} stroke={activeColors.accent} strokeWidth="1" className="opacity-30" />
-                              </>
-                            )}
-
-                            {/* Anchor nodes */}
-                            {/* Primary Handle */}
-                            <circle cx={pt1.x} cy={pt1.y} r="8" fill={activeColors.primary} stroke="#ffffff" strokeWidth="2" className="drop-shadow-[0_0_6px_rgba(255,255,255,0.6)]" />
-                            
-                            {/* Secondary Handle */}
-                            {redesignPalette !== "monochromatic" && (
-                              <circle cx={pt2.x} cy={pt2.y} r="6" fill={activeColors.secondary} stroke="#000000" strokeWidth="1.5" />
-                            )}
-
-                            {/* Accent Handle */}
-                            {redesignPalette !== "monochromatic" && (
-                              <circle cx={pt3.x} cy={pt3.y} r="6" fill={activeColors.accent} stroke="#000000" strokeWidth="1.5" />
-                            )}
-                          </>
-                        );
-                      })()}
-                    </svg>
-                  </div>
-
-                  {/* Active Computed Color Badges */}
-                  <div className="w-full grid grid-cols-3 gap-1.5 pt-2 border-t border-slate-900">
-                    <div className="flex flex-col items-center">
-                      <div className="w-full h-7 rounded-lg border border-slate-800/80 flex items-center justify-center font-mono text-[9px] text-white shadow-sm" style={{ backgroundColor: activeColors.primary }}>
-                        <span className="mix-blend-difference font-extrabold">{activeColors.primary}</span>
-                      </div>
-                      <span className="text-[8px] text-slate-500 font-bold uppercase mt-1">Primär</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                      <div className="w-full h-7 rounded-lg border border-slate-800/80 flex items-center justify-center font-mono text-[9px] text-white shadow-sm" style={{ backgroundColor: activeColors.secondary }}>
-                        <span className="mix-blend-difference font-extrabold">{activeColors.secondary}</span>
-                      </div>
-                      <span className="text-[8px] text-slate-500 font-bold uppercase mt-1">Sekundär</span>
-                    </div>
-                    <div className="flex flex-col items-center">
-                      <div className="w-full h-7 rounded-lg border border-slate-800/80 flex items-center justify-center font-mono text-[9px] text-white shadow-sm" style={{ backgroundColor: activeColors.accent }}>
-                        <span className="mix-blend-difference font-extrabold">{activeColors.accent}</span>
-                      </div>
-                      <span className="text-[8px] text-slate-500 font-bold uppercase mt-1">Akzent</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Farbharmonie Presets Selector */}
-                <div className="space-y-1.5">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Harmonischer Algorithmus:</span>
-                  <div className="flex flex-col gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setRedesignPalette("monochromatic")}
-                      className={`p-2 rounded-xl border text-left transition flex flex-col justify-center h-14 ${
-                        redesignPalette === "monochromatic"
-                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
-                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                      }`}
-                    >
-                      <span className="text-[10px] font-extrabold block">MONOCHROM</span>
-                      <span className="text-[8px] text-slate-400 leading-tight">
-                        Nuancen einer Einzelfarbe.
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setRedesignPalette("split_complementary")}
-                      className={`p-2 rounded-xl border text-left transition flex flex-col justify-center h-14 ${
-                        redesignPalette === "split_complementary"
-                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
-                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                      }`}
-                    >
-                      <span className="text-[10px] font-extrabold block">SPLIT-KOMPL.</span>
-                      <span className="text-[8px] text-slate-400 leading-tight">
-                        Kühle komplementäre Töne.
-                      </span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setRedesignPalette("triadic")}
-                      className={`p-2 rounded-xl border text-left transition flex flex-col justify-center h-14 ${
-                        redesignPalette === "triadic"
-                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
-                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                      }`}
-                    >
-                      <span className="text-[10px] font-extrabold block">TRIADE</span>
-                      <span className="text-[8px] text-slate-400 leading-tight">
-                        Drei equidistant verteilte Töne.
-                      </span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Hintergrundart Selector */}
-                <div className="space-y-1.5 pt-2 border-t border-slate-800/80 mt-4">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Hintergrund & Layout-Kontrast:</span>
-                  <div className="flex flex-col gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setRedesignBackgroundType("dark")}
-                      className={`px-3 py-2.5 rounded-xl border flex items-center gap-2 transition ${
-                        redesignBackgroundType === "dark"
-                          ? "bg-slate-800 border-slate-500 text-white shadow-md shadow-slate-900/50"
-                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                      }`}
-                    >
-                      <div className="w-3.5 h-3.5 rounded-full bg-[#121212] border border-slate-600"></div>
-                      <span className="text-[11px] font-extrabold">DARK MODE</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setRedesignBackgroundType("light")}
-                      className={`px-3 py-2.5 rounded-xl border flex items-center gap-2 transition ${
-                        redesignBackgroundType === "light"
-                          ? "bg-slate-100 border-slate-300 text-slate-900 shadow-md shadow-slate-200/50"
-                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                      }`}
-                    >
-                      <div className="w-3.5 h-3.5 rounded-full bg-white border border-slate-300"></div>
-                      <span className="text-[11px] font-extrabold">LIGHT MODE</span>
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsManualSketchOpen(true);
+                      setUseSketchInAi(true);
+                    }}
+                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
+                      isManualSketchOpen
+                        ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
+                        : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                    }`}
+                  >
+                    <span className="text-[9px] font-extrabold block leading-tight">MANUELLE SKIZZE</span>
+                    <span className="text-[8px] text-slate-400 leading-snug">
+                      Zeichnen Sie Ihre eigene Layout-Skizze.
+                    </span>
+                  </button>
                 </div>
               </div>
 
-              {/* SCHRITT 6 / ÜBERGABE KI */}
+              {/* SCHRITT 5 / ÜBERGABE KI */}
               <div className="pt-4 border-t border-slate-800/80 space-y-3">
-                <div className="bg-slate-950/60 rounded-xl border border-slate-800/50 p-3 space-y-1.5 border-yellow-500/10">
-                  <div className="flex items-center gap-1.5 text-slate-300">
-                    <Sparkles className="h-3.5 w-3.5 text-yellow-400 animate-pulse" />
-                    <span className="text-[11px] font-bold tracking-tight text-white">Gemma-KI-Engine (Aktiv)</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-normal">
-                    Exklusive mathematische CSS-Rendering Engine mit {
-                      redesignPalette === "monochromatic" ? `Monochromatischem Schema (${activeColors.primary})` :
-                      redesignPalette === "split_complementary" ? `Gesplittet komplementärem Schema (${activeColors.primary}, ${activeColors.secondary}, ${activeColors.accent})` :
-                      `Triadischen Harmonien (${activeColors.primary}, ${activeColors.secondary}, ${activeColors.accent})`
-                    }.
-                  </p>
-                </div>
-
                 <button
                   onClick={sendRedesignToAI}
                   disabled={isRedesignSending || !redesignExtractedText}
@@ -3066,7 +3181,9 @@ export default function App() {
           <div className="bg-slate-900/80 rounded-2xl border border-slate-800 p-6 min-h-[500px] flex flex-col justify-between shadow-2xl relative overflow-hidden">
             
             {/* Top glassmorphic gradient */}
-            <div className="absolute top-0 right-0 w-[200px] h-[200px] bg-blue-500/5 rounded-full filter blur-2xl pointer-events-none"></div>
+            <div className={`absolute top-0 right-0 w-[200px] h-[200px] ${
+              activeMode === "ats" ? "bg-emerald-500/5" : activeMode === "redesign" ? "bg-yellow-500/5" : "bg-blue-500/5"
+            } rounded-full filter blur-2xl pointer-events-none`}></div>
 
             {activeMode === "ats" ? (
               // Mode 1 Output: ATS Resume structuring
@@ -3088,9 +3205,9 @@ export default function App() {
                 ) : (
                   <div className="space-y-6">
                     {/* Header info bar */}
-                    <div className="bg-blue-950/40 border border-blue-500/20 rounded-xl p-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+                    <div className="bg-emerald-950/40 border border-emerald-500/20 rounded-xl p-4 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                       <div>
-                        <span className="text-xs text-blue-400 font-semibold block uppercase tracking-wider">Erfolgreich strukturiert</span>
+                        <span className="text-xs text-emerald-400 font-semibold block uppercase tracking-wider">Erfolgreich strukturiert</span>
                         <h4 className="text-sm font-bold text-white mt-1">
                           {parsedResumeData.basics?.name === "[NAME_MASKED]" ? (manualNames.split(',')[0] || "De-maskierter Name") : parsedResumeData.basics?.name}
                         </h4>
@@ -3123,7 +3240,7 @@ export default function App() {
                         {/* Personal Basics */}
                         <div className="space-y-2">
                           <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 border-b border-slate-800 pb-1">
-                            <User className="h-3 w-3 text-blue-400" />
+                            <User className="h-3 w-3 text-emerald-400" />
                             Kontakt-Details (Direkt bearbeitbar)
                           </h5>
                           <div className="space-y-2">
@@ -3133,7 +3250,7 @@ export default function App() {
                                 type="text"
                                 value={parsedResumeData.basics?.name || ""}
                                 onChange={(e) => updateBasics("name", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-blue-500"
+                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-emerald-500"
                               />
                             </div>
                             <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
@@ -3142,7 +3259,7 @@ export default function App() {
                                 type="text"
                                 value={parsedResumeData.basics?.email || ""}
                                 onChange={(e) => updateBasics("email", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-blue-500"
+                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-emerald-500"
                               />
                             </div>
                             <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
@@ -3151,7 +3268,7 @@ export default function App() {
                                 type="text"
                                 value={parsedResumeData.basics?.phone || ""}
                                 onChange={(e) => updateBasics("phone", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-blue-500"
+                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-emerald-500"
                               />
                             </div>
                             <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800 text-[11px] space-y-1">
@@ -3160,7 +3277,7 @@ export default function App() {
                                 type="text"
                                 value={parsedResumeData.basics?.address || ""}
                                 onChange={(e) => updateBasics("address", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-blue-500"
+                                className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-semibold focus:outline-none focus:border-emerald-500"
                               />
                             </div>
                           </div>
@@ -3169,7 +3286,7 @@ export default function App() {
                         {/* Skills List */}
                         <div className="space-y-2">
                           <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5 border-b border-slate-800 pb-1">
-                            <Layers className="h-3 w-3 text-blue-400" />
+                            <Layers className="h-3 w-3 text-emerald-400" />
                             Fähigkeiten / Hard Skills (Kommagetrennt)
                           </h5>
                           <div className="space-y-2">
@@ -3177,7 +3294,7 @@ export default function App() {
                               value={(parsedResumeData.skills || []).join(", ")}
                               onChange={(e) => handleSkillsChange(e.target.value)}
                               rows={2}
-                              className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-blue-500 font-mono"
+                              className="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-emerald-500 font-mono"
                               placeholder="z.B. React, TypeScript, Node.js"
                             />
                             <div className="flex flex-wrap gap-1 pt-1">
@@ -3194,13 +3311,13 @@ export default function App() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between border-b border-slate-800 pb-1">
                             <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                              <Layers className="h-3 w-3 text-blue-400" />
+                              <Layers className="h-3 w-3 text-emerald-400" />
                               Schule & Ausbildung
                             </h5>
                             <button
                               type="button"
                               onClick={addEducationEntry}
-                              className="text-[10px] text-blue-400 hover:text-blue-300 font-bold animate-pulse"
+                              className="text-[10px] text-emerald-400 hover:text-emerald-300 font-bold animate-pulse"
                             >
                               + Hinzufügen
                             </button>
@@ -3226,7 +3343,7 @@ export default function App() {
                                         type="text"
                                         value={edu.title || ""}
                                         onChange={(e) => updateEducation(index, "title", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-bold focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-200 font-bold focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                     <div>
@@ -3235,7 +3352,7 @@ export default function App() {
                                         type="text"
                                         value={edu.institution || ""}
                                         onChange={(e) => updateEducation(index, "institution", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-300 focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                     <div>
@@ -3244,7 +3361,7 @@ export default function App() {
                                         type="text"
                                         value={edu.period || ""}
                                         onChange={(e) => updateEducation(index, "period", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-300 font-mono focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-slate-300 font-mono focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                   </div>
@@ -3265,7 +3382,7 @@ export default function App() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between border-b border-slate-800 pb-1">
                             <h5 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                              <Briefcase className="h-3 w-3 text-blue-400" />
+                              <Briefcase className="h-3 w-3 text-emerald-400" />
                               Arbeitsstellen & Werdegang
                             </h5>
                           </div>
@@ -3290,7 +3407,7 @@ export default function App() {
                                         type="text"
                                         value={job.position || ""}
                                         onChange={(e) => updateWork(index, "position", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-200 font-bold focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-200 font-bold focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                     <div>
@@ -3299,7 +3416,7 @@ export default function App() {
                                         type="text"
                                         value={job.name || ""}
                                         onChange={(e) => updateWork(index, "name", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-200 font-medium focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-200 font-medium focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                     <div>
@@ -3308,7 +3425,7 @@ export default function App() {
                                         type="text"
                                         value={job.startDate || ""}
                                         onChange={(e) => updateWork(index, "startDate", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                     <div>
@@ -3317,7 +3434,7 @@ export default function App() {
                                         type="text"
                                         value={job.endDate || ""}
                                         onChange={(e) => updateWork(index, "endDate", e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono focus:outline-none focus:border-blue-500"
+                                        className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1 text-slate-300 font-mono focus:outline-none focus:border-emerald-500"
                                       />
                                     </div>
                                   </div>
@@ -3328,7 +3445,7 @@ export default function App() {
                                       value={(job.highlights || []).join("\n")}
                                       onChange={(e) => handleWorkHighlightsTextareaChange(index, e.target.value)}
                                       rows={3}
-                                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-slate-300 text-xs focus:outline-none focus:border-blue-500 font-sans"
+                                      className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2.5 text-slate-300 text-xs focus:outline-none focus:border-emerald-500 font-sans"
                                       placeholder="Erfolge, Tätigkeiten und Errungenschaften..."
                                     />
                                   </div>
@@ -3367,19 +3484,11 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="border-b border-slate-800 pb-2">
                       <div>
                         <span className="text-xs text-blue-400 font-semibold block uppercase tracking-wider">GENERIERTER ENTWURF</span>
                         <h4 className="text-sm font-bold text-white mt-0.5">Individuelles Anschreiben</h4>
                       </div>
-                      <button
-                        onClick={() => triggerCopy(deMaskedMatchingResult, "letter")}
-                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition"
-                        id="btn-copy-letter"
-                      >
-                        {copiedSection === "letter" ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                        {copiedSection === "letter" ? "Kopiert" : "Entwurf kopieren"}
-                      </button>
                     </div>
 
                     {/* Visualization */}
@@ -3409,205 +3518,127 @@ export default function App() {
                     <div className="bg-slate-900 p-8 text-slate-200 font-serif min-h-[500px] rounded-lg border border-slate-800 space-y-4">
                       {structuredLetter && (
                         <>
-                          {/* Sektionen-Auswahl / Tabs */}
-                          <div className="flex flex-wrap items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 font-sans text-xs gap-1 mb-6">
-                            <button
-                              type="button"
-                              onClick={() => setActiveLetterSection('all')}
-                              className={`flex-1 min-w-[120px] py-2 px-3 text-center rounded-lg font-bold transition flex items-center justify-center gap-1.5 ${
-                                activeLetterSection === 'all'
-                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                              }`}
-                            >
-                              <Eye className="h-3.5 w-3.5" />
-                              Alle Felder
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveLetterSection('briefkopf')}
-                              className={`flex-1 min-w-[120px] py-2 px-3 text-center rounded-lg font-bold transition flex items-center justify-center gap-1.5 ${
-                                activeLetterSection === 'briefkopf'
-                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                              }`}
-                            >
-                              <MapPin className="h-3.5 w-3.5" />
-                              1. Briefkopf
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveLetterSection('betreff')}
-                              className={`flex-1 min-w-[120px] py-2 px-3 text-center rounded-lg font-bold transition flex items-center justify-center gap-1.5 ${
-                                activeLetterSection === 'betreff'
-                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                              }`}
-                            >
-                              <FileText className="h-3.5 w-3.5" />
-                              2. Betreff
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setActiveLetterSection('anschreiben')}
-                              className={`flex-1 min-w-[120px] py-2 px-3 text-center rounded-lg font-bold transition flex items-center justify-center gap-1.5 ${
-                                activeLetterSection === 'anschreiben'
-                                  ? 'bg-blue-600 text-white shadow-md shadow-blue-500/10'
-                                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
-                              }`}
-                            >
-                              <Mail className="h-3.5 w-3.5" />
-                              3. Anschreiben
-                            </button>
+                          {/* 1. Briefkopf */}
+                          <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
+                            <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
+                              <MapPin className="h-4 w-4 text-blue-500" />
+                              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">1. Briefkopf (Absenderadresse, Empfängeradresse, Datum)</h4>
+                            </div>
+                            
+                            <div className="flex flex-col md:flex-row justify-between gap-4">
+                              <div className="w-full">
+                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Absenderadresse</label>
+                                <textarea
+                                    value={structuredLetter.senderAddress || ''}
+                                    onChange={(e) => setStructuredLetter({...structuredLetter, senderAddress: e.target.value})}
+                                    className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                    rows={4}
+                                    placeholder="Name&#10;Straße Hausnummer&#10;PLZ Ort&#10;E-Mail / Telefon"
+                                />
+                              </div>
+                              <div className="w-full">
+                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">Empfängeradresse</label>
+                                <textarea
+                                    value={structuredLetter.recipientAddress || ''}
+                                    onChange={(e) => setStructuredLetter({...structuredLetter, recipientAddress: e.target.value})}
+                                    className="w-full bg-slate-950 p-3 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                    rows={4}
+                                    placeholder="Firmenname&#10;z. Hd. Ansprechpartner&#10;Straße Hausnummer&#10;PLZ Ort"
+                                />
+                              </div>
+                            </div>
+                            
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">Datum</label>
+                              <input 
+                                type="text" 
+                                value={structuredLetter.date || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, date: e.target.value})} 
+                                className="w-full bg-slate-950 p-2.5 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
+                              />
+                            </div>
                           </div>
 
-                          {/* 1. Briefkopf */}
-                          {(activeLetterSection === 'all' || activeLetterSection === 'briefkopf') && (
-                            <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
-                              <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
-                                <MapPin className="h-4 w-4 text-blue-500" />
-                                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">1. Briefkopf (Absenderadresse, Empfängeradresse, Datum)</h4>
-                              </div>
-                              
-                              <div className="flex flex-col md:flex-row justify-between gap-4">
-                                <div className="w-full">
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Absenderadresse</label>
-                                  <textarea
-                                      value={structuredLetter.senderAddress || ''}
-                                      onChange={(e) => setStructuredLetter({...structuredLetter, senderAddress: e.target.value})}
-                                      className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                      rows={4}
-                                      placeholder="Name&#10;Straße Hausnummer&#10;PLZ Ort&#10;E-Mail / Telefon"
-                                  />
-                                </div>
-                                <div className="w-full">
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">Empfängeradresse</label>
-                                  <textarea
-                                      value={structuredLetter.recipientAddress || ''}
-                                      onChange={(e) => setStructuredLetter({...structuredLetter, recipientAddress: e.target.value})}
-                                      className="w-full bg-slate-950 p-3 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                      rows={4}
-                                      placeholder="Firmenname&#10;z. Hd. Ansprechpartner&#10;Straße Hausnummer&#10;PLZ Ort"
-                                  />
-                                </div>
-                              </div>
-                              
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">Datum</label>
-                                <input 
-                                  type="text" 
-                                  value={structuredLetter.date || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, date: e.target.value})} 
-                                  className="w-full bg-slate-950 p-2.5 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                />
-                              </div>
-                            </div>
-                          )}
-
                           {/* 2. Betreff */}
-                          {(activeLetterSection === 'all' || activeLetterSection === 'betreff') && (
-                            <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
-                              <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
-                                <FileText className="h-4 w-4 text-blue-500" />
-                                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">2. Betreff</h4>
-                              </div>
-                              
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Betreffzeile</label>
-                                <input 
-                                  type="text" 
-                                  value={structuredLetter.subject || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, subject: e.target.value})} 
-                                  className="w-full bg-slate-950 p-2.5 rounded-lg text-xs font-bold border border-slate-850 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                  placeholder="Bewerbung als..."
-                                />
-                              </div>
-                              
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Berufsbezeichnung</label>
-                                <input 
-                                  type="text" 
-                                  value={structuredLetter.jobTitle || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, jobTitle: e.target.value})} 
-                                  className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                />
-                              </div>
+                          <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
+                            <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
+                              <FileText className="h-4 w-4 text-blue-500" />
+                              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">2. Betreff</h4>
                             </div>
-                          )}
+                            
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Betreffzeile</label>
+                              <input 
+                                type="text" 
+                                value={structuredLetter.subject || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, subject: e.target.value})} 
+                                className="w-full bg-slate-950 p-2.5 rounded-lg text-xs font-bold border border-slate-850 font-serif focus:outline-none focus:border-blue-500 transition" 
+                                placeholder="Bewerbung als..."
+                              />
+                            </div>
+                          </div>
 
                           {/* 3. Anschreiben */}
-                          {(activeLetterSection === 'all' || activeLetterSection === 'anschreiben') && (
-                            <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
-                              <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
-                                <Mail className="h-4 w-4 text-blue-500" />
-                                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">3. Anschreiben (Anrede, Einleitung, Hauptteil, Schlussteil, Grußformel, Unterschrift)</h4>
-                              </div>
-                              
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Anrede</label>
-                                <input 
-                                  type="text" 
-                                  value={structuredLetter.salutation || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, salutation: e.target.value})} 
-                                  className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Einleitung</label>
-                                <textarea 
-                                  value={structuredLetter.introduction || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, introduction: e.target.value})} 
-                                  className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                  rows={3} 
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Hauptteil</label>
-                                <textarea 
-                                  value={structuredLetter.mainBody || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, mainBody: e.target.value})} 
-                                  className="w-full bg-slate-950 p-3 rounded-lg text-xs min-h-[150px] border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Schlussteil</label>
-                                <textarea 
-                                  value={structuredLetter.closing || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, closing: e.target.value})} 
-                                  className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                  rows={3} 
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Grußformel</label>
-                                <input 
-                                  type="text" 
-                                  value={structuredLetter.signoff || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, signoff: e.target.value})} 
-                                  className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Unterschrift (Name)</label>
-                                <input 
-                                  type="text" 
-                                  value={structuredLetter.signature || ''} 
-                                  onChange={(e) => setStructuredLetter({...structuredLetter, signature: e.target.value})} 
-                                  className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
-                                />
-                              </div>
+                          <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
+                            <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
+                              <Mail className="h-4 w-4 text-blue-500" />
+                              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">3. Anschreiben (Anrede, Einleitung, Hauptteil, Schlussteil, Unterschrift)</h4>
                             </div>
-                          )}
-                          
+                            
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Anrede</label>
+                              <input 
+                                type="text" 
+                                value={structuredLetter.salutation || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, salutation: e.target.value})} 
+                                className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Einleitung</label>
+                              <textarea 
+                                value={structuredLetter.introduction || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, introduction: e.target.value})} 
+                                className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
+                                rows={3} 
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Hauptteil</label>
+                              <textarea 
+                                value={structuredLetter.mainBody || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, mainBody: e.target.value})} 
+                                className="w-full bg-slate-950 p-3 rounded-lg text-xs min-h-[150px] border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Schlussteil</label>
+                              <textarea 
+                                value={structuredLetter.closing || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, closing: e.target.value})} 
+                                className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
+                                rows={3} 
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">Unterschrift (Name)</label>
+                              <input 
+                                type="text" 
+                                value={structuredLetter.signature || ''} 
+                                onChange={(e) => setStructuredLetter({...structuredLetter, signature: e.target.value})} 
+                                className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition" 
+                              />
+                            </div>
+                          </div>
+
                           <div className="flex flex-col sm:flex-row gap-4 mt-4 pt-4 border-t border-slate-800">
                             <button
                               onClick={() => {
-                                const text = `${structuredLetter.senderAddress}\n\n${structuredLetter.recipientAddress}\n\n${structuredLetter.date}\n\n${structuredLetter.subject}\n\n${structuredLetter.jobTitle}\n\n${structuredLetter.salutation}\n\n${structuredLetter.introduction}\n\n${structuredLetter.mainBody}\n\n${structuredLetter.closing}\n\n${structuredLetter.signoff || 'Mit freundlichen Grüßen'}\n\n${structuredLetter.signature}`;
+                                const text = `${structuredLetter.senderAddress}\n\n${structuredLetter.recipientAddress}\n\n${structuredLetter.date}\n\n${structuredLetter.subject}\n\n${structuredLetter.salutation}\n\n${structuredLetter.introduction}\n\n${structuredLetter.mainBody}\n\n${structuredLetter.closing}\n\nMit freundlichen Grüßen\n\n${structuredLetter.signature}`;
                                 navigator.clipboard.writeText(text);
                                 alert("Kopiert!");
                               }}
@@ -4020,16 +4051,10 @@ export default function App() {
                                           /* Custom editable element styling so they don't stand out when printed */
                                           [contenteditable="true"] {
                                             outline: none !important;
-                                            border: none !important;
-                                            box-shadow: none !important;
                                           }
-                                          [contenteditable="true"]:hover {
-                                            background: rgba(250, 204, 21, 0.04) !important;
-                                          }
-                                          @media print {
-                                            [contenteditable="true"]:hover {
-                                              background: transparent !important;
-                                            }
+                                          [contenteditable="true"]:focus {
+                                            outline: 1px dashed rgba(250, 204, 21, 0.5) !important;
+                                            outline-offset: 2px;
                                           }
                                         </style>
                                       </head>
@@ -4038,7 +4063,7 @@ export default function App() {
                                       </body>
                                     </html>
                                   `}
-                                  onLoad={runContrastCheck}
+                                  onLoad={handleIframeLoad}
                                   className="w-full h-[650px] bg-white rounded-lg border border-slate-900"
                                   sandbox="allow-scripts allow-same-origin"
                                 />
@@ -4050,8 +4075,199 @@ export default function App() {
 
                       {/* Right: WCAG Automated Contrast Checker Sidebar */}
                       {redesignResult && (
-                        <div className="xl:col-span-1 space-y-3 flex flex-col justify-start">
-                        <span className="text-[10px] text-slate-500 font-sans uppercase tracking-wider block">WCAG 2.1 Kontrast-Prüfung:</span>
+                        <div className="xl:col-span-1 space-y-4 flex flex-col justify-start">
+                          {/* Interaktive Farbanpassung & Designkontrollen */}
+                          <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-4 space-y-4">
+                            <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+                              <div>
+                                <span className="text-xs text-yellow-400 font-bold uppercase tracking-wider block">Interaktive Farbanpassung</span>
+                                <span className="text-[10px] text-slate-400 mt-0.5 block">Farben & Layout direkt am Farbenrad anpassen</span>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              {/* LEFT: COLOR WHEEL */}
+                              <div className="space-y-3">
+                                <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">A. Farbenrad & Farbharmonie</span>
+                                
+                                <div className="bg-slate-950 border border-slate-900 rounded-xl p-3 flex flex-col items-center space-y-3 shadow-inner relative overflow-hidden">
+                                  <div 
+                                    className="relative w-36 h-36 select-none touch-none cursor-crosshair opacity-100"
+                                    onPointerDown={handlePointerDown}
+                                    onPointerMove={handlePointerMove}
+                                    onPointerUp={handlePointerUp}
+                                  >
+                                    <div 
+                                      className="w-full h-full rounded-full border border-slate-800/80 shadow-lg flex items-center justify-center relative overflow-hidden"
+                                      style={{
+                                        background: "conic-gradient(from 0deg, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)",
+                                      }}
+                                    >
+                                      <div className="w-20 h-20 rounded-full bg-slate-950 border border-slate-900/80 shadow-inner flex flex-col items-center justify-center z-10 pointer-events-none">
+                                        <span className="text-[8px] text-slate-500 font-sans uppercase tracking-widest font-extrabold">
+                                          {redesignPalette === "split_complementary" ? "Split" : redesignPalette === "triadic" ? "Triade" : "Monochrom"}
+                                        </span>
+                                        <span className="text-xs font-extrabold font-mono text-yellow-400 mt-0.5">{redesignBaseHue}°</span>
+                                      </div>
+                                    </div>
+
+                                    <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-20">
+                                      {(() => {
+                                        const getCoords = (hAngle: number) => {
+                                          const mathAngle = hAngle - 90;
+                                          const rad = (mathAngle * Math.PI) / 180;
+                                          return {
+                                            x: 72 + 54 * Math.cos(rad),
+                                            y: 72 + 54 * Math.sin(rad)
+                                          };
+                                        };
+
+                                        const pt1 = getCoords(redesignBaseHue);
+                                        const pt2 = getCoords(redesignPalette === "split_complementary" ? (redesignBaseHue + 150) % 360 : redesignPalette === "triadic" ? (redesignBaseHue + 120) % 360 : redesignBaseHue);
+                                        const pt3 = getCoords(redesignPalette === "split_complementary" ? (redesignBaseHue + 210) % 360 : redesignPalette === "triadic" ? (redesignBaseHue + 240) % 360 : redesignBaseHue);
+
+                                        return (
+                                          <>
+                                            {redesignPalette === "monochromatic" ? (
+                                              <line x1="72" y1="72" x2={pt1.x} y2={pt1.y} stroke={activeColors.primary} strokeWidth="2" strokeDasharray="3,3" />
+                                            ) : (
+                                              <polygon 
+                                                points={`${pt1.x},${pt1.y} ${pt2.x},${pt2.y} ${pt3.x},${pt3.y}`} 
+                                                fill={`${activeColors.primary}0B`} 
+                                                stroke={activeColors.primary} 
+                                                strokeWidth="2" 
+                                                className="opacity-80"
+                                              />
+                                            )}
+
+                                            <line x1="72" y1="72" x2={pt1.x} y2={pt1.y} stroke={activeColors.primary} strokeWidth="1.5" className="opacity-40" />
+                                            {redesignPalette !== "monochromatic" && (
+                                              <>
+                                                <line x1="72" y1="72" x2={pt2.x} y2={pt2.y} stroke={activeColors.secondary} strokeWidth="1" className="opacity-30" />
+                                                <line x1="72" y1="72" x2={pt3.x} y2={pt3.y} stroke={activeColors.accent} strokeWidth="1" className="opacity-30" />
+                                              </>
+                                            )}
+
+                                            <circle cx={pt1.x} cy={pt1.y} r="7" fill={activeColors.primary} stroke="#ffffff" strokeWidth="1.5" />
+                                            {redesignPalette !== "monochromatic" && (
+                                              <circle cx={pt2.x} cy={pt2.y} r="5.5" fill={activeColors.secondary} stroke="#000000" strokeWidth="1" />
+                                            )}
+                                            {redesignPalette !== "monochromatic" && (
+                                              <circle cx={pt3.x} cy={pt3.y} r="5.5" fill={activeColors.accent} stroke="#000000" strokeWidth="1" />
+                                            )}
+                                          </>
+                                        );
+                                      })()}
+                                    </svg>
+                                  </div>
+
+                                  <div className="w-full grid grid-cols-5 gap-1 pt-1.5 border-t border-slate-900">
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.primary_light }}>
+                                        <span className="mix-blend-difference font-bold">{activeColors.primary_light}</span>
+                                      </div>
+                                      <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Primär<br/>Hell</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.primary_dark }}>
+                                        <span className="mix-blend-difference font-bold">{activeColors.primary_dark}</span>
+                                      </div>
+                                      <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Primär<br/>Dunkel</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.secondary_light }}>
+                                        <span className="mix-blend-difference font-bold">{activeColors.secondary_light}</span>
+                                      </div>
+                                      <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Sekundär<br/>Hell</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.secondary_dark }}>
+                                        <span className="mix-blend-difference font-bold">{activeColors.secondary_dark}</span>
+                                      </div>
+                                      <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Sekundär<br/>Dunkel</span>
+                                    </div>
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.accent }}>
+                                        <span className="mix-blend-difference font-bold">{activeColors.accent}</span>
+                                      </div>
+                                      <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Akzent<br/>&nbsp;</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div className="flex gap-1.5">
+                                  {["monochromatic", "split_complementary", "triadic"].map((p) => (
+                                    <button
+                                      key={p}
+                                      type="button"
+                                      onClick={() => setRedesignPalette(p as any)}
+                                      className={`flex-1 py-1 px-1.5 rounded-lg border text-center transition text-[8px] font-bold ${
+                                        redesignPalette === p
+                                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400"
+                                          : "bg-slate-950/40 border-slate-850 text-slate-500 hover:border-slate-800"
+                                      }`}
+                                    >
+                                      {p === "monochromatic" ? "MONOCHROM" : p === "split_complementary" ? "SPLIT-KOMPL." : "TRIADE"}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* RIGHT: BACK/CONTRAST & APPLY BUTTON */}
+                              <div className="space-y-4 flex flex-col justify-between">
+                                <div className="space-y-3">
+                                  <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">B. Hintergrund & Layout-Kontrast</span>
+                                  
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                      key="dark-toggle"
+                                      type="button"
+                                      onClick={() => setRedesignBackgroundType("dark")}
+                                      className={`px-3 py-2 rounded-xl border flex items-center gap-2 transition ${
+                                        redesignBackgroundType === "dark"
+                                          ? "bg-slate-800 border-slate-500 text-white shadow-md shadow-slate-900/50"
+                                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                                      }`}
+                                    >
+                                      <div className="w-3 h-3 rounded-full bg-[#121212] border border-slate-600"></div>
+                                      <span className="text-[10px] font-extrabold">DARK MODE</span>
+                                    </button>
+                                    <button
+                                      key="light-toggle"
+                                      type="button"
+                                      onClick={() => setRedesignBackgroundType("light")}
+                                      className={`px-3 py-2 rounded-xl border flex items-center gap-2 transition ${
+                                        redesignBackgroundType === "light"
+                                          ? "bg-slate-100 border-slate-300 text-slate-900 shadow-md shadow-slate-200/50"
+                                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                                      }`}
+                                    >
+                                      <div className="w-3 h-3 rounded-full bg-white border border-slate-300"></div>
+                                      <span className="text-[10px] font-extrabold">LIGHT MODE</span>
+                                    </button>
+                                  </div>
+
+                                  <div className="bg-slate-950 border border-slate-900/60 rounded-xl p-3">
+                                    <span className="text-[9px] text-slate-400 font-bold block mb-1 font-sans">Dynamische Vorschau</span>
+                                    <p className="text-[9px] text-slate-500 leading-relaxed font-sans">
+                                      Wählen Sie die Farben am Farbenrad links aus und passen Sie das Kontrast-Layout an. Klicken Sie dann auf die Schaltfläche unten, um diese Farbwerte direkt in Ihren CSS-Quellcode des aktuell ausgewählten Dokuments ({redesignSelectedDoc === "resume" ? "Lebenslauf" : "Motivationsschreiben"}) zu injizieren.
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={applyColorWheelToCss}
+                                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-extrabold rounded-xl text-xs transition shadow-lg shadow-yellow-500/10 flex items-center justify-center gap-1.5"
+                                >
+                                  <Sparkles className="h-3.5 w-3.5" />
+                                  Farbschema im CSS-Quellcode anpassen
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          <span className="text-[10px] text-slate-500 font-sans uppercase tracking-wider block">WCAG 2.1 Kontrast-Prüfung:</span>
                         
                         {/* Summary Widget */}
                         {(() => {
@@ -4367,7 +4583,7 @@ export default function App() {
       <footer className="border-t border-slate-800/60 bg-slate-950/50 py-6 mt-12 z-10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-xs text-slate-500">
-            © 2026 Privacy-First ATS Transformer. DSGVO-Konforme lokale Anonymisierung vor KI-Verarbeitung.
+            © 2026 Lazy-HR-Workaround. Intelligente Automatisierung für deinen Bewerbungserfolg.
           </div>
           <div className="flex items-center space-x-4 text-xs text-slate-400">
             <span>Powered by <strong>Gemma-4</strong></span>
@@ -4485,16 +4701,10 @@ export default function App() {
                       /* Custom editable element styling so they don't stand out when printed */
                       [contenteditable="true"] {
                         outline: none !important;
-                        border: none !important;
-                        box-shadow: none !important;
                       }
-                      [contenteditable="true"]:hover {
-                        background: rgba(250, 204, 21, 0.04) !important;
-                      }
-                      @media print {
-                        [contenteditable="true"]:hover {
-                          background: transparent !important;
-                        }
+                      [contenteditable="true"]:focus {
+                        outline: 1px dashed rgba(250, 204, 21, 0.5) !important;
+                        outline-offset: 2px;
                       }
                     </style>
                   </head>
@@ -4503,6 +4713,7 @@ export default function App() {
                   </body>
                 </html>
               `}
+              onLoad={handleIframeLoad}
               className="w-[210mm] h-[297mm] max-w-full max-h-full bg-white rounded-lg shadow-2xl border border-slate-900"
               sandbox="allow-scripts allow-same-origin"
             />
