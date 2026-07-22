@@ -380,7 +380,7 @@ app.use(express.json({ limit: "10mb" }));
       textPrompt = contents;
     }
 
-    if (hasInlineData && filePart) {
+    if (hasInlineData && filePart && !config?.skipTextExtraction) {
       console.log(`[Resilient API] Input contains file data. Extracting text using multimodal gemma-4-31b-it first...`);
       try {
         const extractPrompt = "Lies das folgende Dokument vollständig aus und erstelle eine fehlerfreie, strukturierte, vollständige Textversion des Inhalts auf Deutsch. Gib nur den extrahierten Text zurück.";
@@ -1164,7 +1164,10 @@ Präferenzen:
         secondary_light,
         secondary_dark,
         manualSketchGrid,
-        backgroundType
+        sketchImage,
+        backgroundType,
+        sketchPrompt,
+        sketchMode
       } = req.body;
       if (!cvText || !cvText.trim()) {
         return res.status(400).json({ error: "Bitte geben Sie einen Lebenslauf-Text an." });
@@ -1216,6 +1219,33 @@ FARB-KONZEPT:
 ${paletteDescription}
 
 ${contrastInstruction}
+
+==================================================
+ABSOLUTE LAYOUT- & CSS-REGELN (ÜBERLAPPUNGSVERBOT & Z-INDEX-ARCHITEKTUR):
+1. ABSOLUTES VERBOT VON TEXT-ÜBERLAPPUNGEN:
+   - Verwende NIEMALS 'position: absolute' für Textblöcke, Überschriften (h1-h6), Absätze (p), Listen (ul/li), Daten oder Firmennamen!
+   - Alle Textelemente MÜSSEN im normalen CSS-Dokumentenfluss stehen (via Flexbox 'display: flex; flex-direction: column; gap: 1rem;' oder CSS-Grid).
+   - Setze immer ausreichenden Zeilenabstand (line-height: 1.5) und Abstände (margin-bottom: 0.75rem), damit sich Schriften unter keinen Umständen berühren oder überlagern.
+
+2. DEKORATIVE HINTERGRUND-ELEMENTE & SVG-MUSTER ('P'-ZONEN / WELLEN / DNA-STRÄNGE):
+   - Sämtliche dekorativen SVG-Muster, Sinuswellen, DNA-Strang-Formen, diagonale Trennlinien und farbige Hintergründe aus den 'P'-Zonen MÜSSEN zwingend in eine eigene Hintergrund-Ebene gelegt werden:
+     .bg-decorations { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; opacity: 0.15; }
+   - Sämtliche Text-Container MÜSSEN auf 'position: relative; z-index: 10; background: transparent;' liegen.
+   - Kein dekoratives Muster darf jemals vor dem Text liegen oder die Textlesbarkeit einschränken!
+
+3. PROFILBILD / AVATAR-CONTAINER ('I' / SCHWARZE ZONE):
+   - Das Profilbild (src="[AVATAR_PLACEHOLDER]") MUSS als eigener Block-Container im Dokumentenfluss eingebettet sein (entsprechend der schwarzen 'I'-Zone in der Skizze).
+   - Feste Maße vergeben: e.g. width: 120px; height: 120px; border-radius: 50%; object-fit: cover; flex-shrink: 0; display: block; border: 3px solid ${pLight}; margin: 0 auto;
+   - Das Foto darf NIEMALS absolut über Stichpunkten, Aufzählungen, Berufserfahrungen oder Texten schweben!
+
+4. ZONEN-ZUORDNUNG & RÄUMLICHE ANORDNUNG DER SKIZZE:
+   - 'B' (Blau): Kontaktdaten & Name -> Oben (Header-Bereich)
+   - 'Y' (Gelb): Fähigkeiten & Kenntnisse -> Oben-Mitte / Skill-Boxen
+   - 'G' (Grün): Ausbildung & Abschlüsse -> Zugewiesener grüner Bereich (z. B. linke/rechte Spalte)
+   - 'I' (Schwarz): Profilbild / Porträt-Foto Platzhalter (src="[AVATAR_PLACEHOLDER]") -> Zugewiesener schwarzer Bereich
+   - 'R' (Rot): Berufserfahrung & Werdegang -> Unterer Hauptbereich
+   - 'P' (Lila): Style-Aufteilung, Wellen, Trennlinien -> Als transparente SVG-Hintergrundform (z.B. diagonal verlaufende Sinuswellen/DNA-Stränge)
+==================================================
 
 Schreibe den Code so, dass der Text direkt in die farbliche und geometrische Gestaltung einbezogen wird (Schlüsselbegriffe in Akzentfarben, Einrückungen entlang der Design-Kanten). Die definierten Farbcodes MÜSSEN im CSS verwendet werden.
 
@@ -1278,7 +1308,7 @@ Nutze exakt dieses Schema als Antwortstruktur:
   }
 }`;
 
-      let promptText = `Bitte erstelle das harmonische Design für diesen Lebenslauf im folgenden Stil: ${style === "kurvlinear" ? "KURVLINEAR / ORGANISCH" : "ORTHOGONAL / ANALYTISCH"}.
+      let promptText = `Bitte erstelle das harmonische Design für diesen Lebenslauf im folgenden Stil: ${style === "kurvlinear" ? "KURVLINEAR / ORGANISCH (KREATIV): Vermeide simple Blasen oder standardisierte Kreise. Schaffe ein hochästhetisches, organisches Layout, z. B. mit fließenden, wellenartigen Trennelementen, eleganten, asymmetrischen Kurven oder botanisch inspirierten organischen Formen, die ein wirklich kreatives und visuell anspruchsvolles Gesamtbild ergeben." : "ORTHOGONAL / ANALYTISCH"}.
 Nutze das folgende Farb-Harmonie-Konzept: ${palette}.
 
 Lebenslauf-Inhalt:
@@ -1286,27 +1316,50 @@ Lebenslauf-Inhalt:
 ${cvText}
 """`;
 
-      if (manualSketchGrid) {
-        promptText += `\n\nACHTUNG - MANUELLE DESIGN-SKIZZE VOM BENUTZER:
-Der Benutzer hat eine manuelle Layout-Skizze für das Dokument gezeichnet. Verwende diese Struktur exakt für dein generiertes HTML und CSS!
-Jeder Buchstabe repräsentiert eine Zone auf dem DIN A4 Blatt (Grid von 15 Spalten x 20 Zeilen):
-- 'B' steht für: Blaue Zone (Persönliche Daten, Name, E-Mail, Telefon, Anschrift)
-- 'Y' steht für: Gelbe Zone (Fähigkeiten, Kenntnisse, Programmiersprachen, Zertifikate)
-- 'R' steht für: Rote Zone (Berufserfahrung, Arbeitgeber, Zeiträume, Projektdetails)
-- 'I' steht für: Schwarze Zone (Bild / Foto-Platzhalter)
-- 'G' steht für: Grüne Zone (Ausbildung, Schule, Studium, Abschlüsse, Weiterbildungen)
-- 'P' steht für: Lila Zone (Style-Aufteilung, gerade Trennlinien, dekorative Wellen, grafische Trenner etc.)
-- '.' steht für: Leere Zone (Hintergrund / Leerraum)
+      if (manualSketchGrid || sketchImage || (sketchPrompt && sketchPrompt.trim() !== "")) {
+        promptText += `\n\n==================================================\n`;
+        promptText += `STRIKTES LAYOUT- & DESIGN-GEBOT VOM BENUTZER (OBERSTE PRIORITÄT):\n`;
+        promptText += `Der Benutzer hat individuelle Layout- & Design-Vorgaben gemacht! DU MUSST DICH BEIM ERSTELLEN DES HTML/CSS ABSOLUT STRIKT AN DIESE ANWEISUNGEN HALTEN!\n`;
 
-WICHTIG ZUR SKIZZEN-INTERPRETATION:
-Die Skizze soll als übergeordnete Orientierung verstanden werden und muss nicht auf den Punkt präzise im Raster abgebildet werden. Wenn der Benutzer z.B. 2 viereckige Zonen direkt untereinander zeichnet, sollten diese im generierten Design sauber vertikal gefluchtet und gerade ausgerichtet sein (gerade Kanten), solange sie nicht an einer Kurve hängen. Nutze die Skizze als grobe Aufteilungsvorlage, sorge aber im CSS für mathematisch exakte Ausrichtungen, gerade verlaufende Fluchten für untereinander liegende Boxen und ein harmonisches Gesamtbild.
+        if (sketchImage) {
+          promptText += `\nINLINE VISUELLE DESIGN-SKIZZE (BILD-REFERENZ BEIGEFÜGT):
+Das angehängte Bild zeigt die exakt gezeichnete Design-Skizze mit allen Farb-Zonen und visuellen Linienführung!
+Lies das Bild als visuelles Layout-Muster und erstelle das HTML/CSS so, dass die Anordnung der Boxen, Farben, Trennlinien und der 'P'-Style-Zonen (wie Wellen oder DNA-Stränge) exakt so auf der A4-Seite platziert sind wie auf dem Bild!\n`;
+        }
 
-Hier ist die gezeichnete Style-Skizze des Benutzers:
+        if (manualSketchGrid) {
+          promptText += `\nGEZEICHNETE STYLE-SKIZZE (RASTER 15 SPALTEN x 20 ZEILEN):
+Verwende diese Struktur exakt für dein generiertes HTML und CSS Grid/Flexbox Layout!
+Jeder Buchstabe repräsentiert eine Zone auf dem DIN A4 Blatt:
+- 'B': Blaue Zone -> Persönliche Daten, Name, E-Mail, Telefon, Anschrift
+- 'Y': Gelbe Zone -> Fähigkeiten, Kenntnisse, Programmiersprachen, Zertifikate
+- 'R': Rote Zone -> Berufserfahrung, Arbeitgeber, Zeiträume, Projektdetails
+- 'I': Schwarze Zone -> Profilbild / Porträt-Foto Platzhalter (nur im Lebenslauf!)
+- 'G': Grüne Zone -> Ausbildung, Schule, Studium, Abschlüsse
+- 'P': Lila Zone -> Style-Aufteilung, dekorative Wellen, grafische Trenner, SVG-Formen, Schmuckelemente
+- '.': Leere Zone -> Freier Hintergrund / Margin / Leerraum
+
+SKIZZEN-GRID:
 [START_SKETCH]
 ${manualSketchGrid}
 [END_SKETCH]
 
-Bitte richte dein CSS (z.B. Grid-Zonen, Flexbox-Ausrichtung, Spaltenaufteilung) und deine HTML-Elemente exakt an dieser Zonenaufteilung aus! Wenn 'I' (Bild) oben rechts gezeichnet ist, platziere das Bild oben rechts. Wenn 'B' (Persönliche Daten) links als Spalte gezeichnet ist, erstelle eine linke Seitenleiste für die persönlichen Daten. Wenn 'Y' (Fähigkeiten) unten quer verläuft, platziere Fähigkeiten am unteren Seitenrand, etc.`;
+SKIZZEN-MODUS INTERPRETATION:
+${sketchMode === "freehand" 
+  ? "FREIHAND-MODUS: Der Benutzer hat diese Skizze FREIHAND gezeichnet. Du musst dich beim Layout (insbesondere bei Trennlinien und den 'P'-Stilzonen) exakt an die gezeichneten Pfade und Formen halten! Setze die 'P'-Zonen als fließende, organische CSS-Layouts, clip-paths oder benutzerdefinierte SVG-Elemente um!"
+  : "RASTER-MODUS: Der Benutzer hat diese Skizze RASTERBASIERT gezeichnet. Richte dein CSS Grid (z.B. grid-template-areas oder grid-column/row) exakt an den mathematisch präzisen Kanten dieser Zonen aus!"
+}\n`;
+        }
+
+        if (sketchPrompt && sketchPrompt.trim() !== "") {
+          promptText += `\nBENUTZER-ANWEISUNG / ERWEITERTER PROMPT (KRITISCH & ZWINGEND UMZUSETZEN):
+Der Benutzer hat folgende explizite Design- und Styling-Anweisung formuliert:
+>>> "${sketchPrompt.trim()}" <<<
+
+WICHTIGSTE VORGABE:
+Du MUSST die Idee "${sketchPrompt.trim()}" unverkennbar und prägend in das Dokument-Design (CSS, HTML, SVG-Elemente, Hintergründe, Formgebungen oder 'P'-Zonen) integrieren! Wenn der Benutzer z.B. 'Äste von Pflanzen mit Blättern am Ende', 'Diagonale Wellen' oder 'Sinuswellen / DNA-Strang kreisförmig' fordert, MUSS dies durch dekorative SVG-Formen im Hintergrund (.bg-decorations z-index: 0) im generierten HTML/CSS gut sichtbar eingebunden sein!`;
+        }
+        promptText += `\n==================================================\n`;
       }
 
       promptText += `\n\nACHTUNG - BENUTZER-BILD (PORTRAIT FOTO) / PLATZHALTER:
@@ -1320,10 +1373,30 @@ Damit kann das System das Foto später dynamisch einfügen. Nutze keine Platzhal
 ZUSÄTZLICHE BEWERBUNGS-KÜRZUNG:
 Kürze das Motivationsschreiben zwingend auf genau drei kurze Absätze (Einleitung, Hauptteil, Schlusssatz/Verabschiedung). Es ist ansonsten zu lang für eine A4-Seite.`;
 
+      // Build contents (support multimodal inline image if sketchImage is provided)
+      let contents: any = promptText;
+      let isMultimodal = false;
+      if (sketchImage && typeof sketchImage === "string" && sketchImage.includes("base64,")) {
+        const base64Data = sketchImage.split("base64,")[1];
+        if (base64Data) {
+          contents = [
+            promptText,
+            {
+              inlineData: {
+                mimeType: "image/png",
+                data: base64Data
+              }
+            }
+          ];
+          isMultimodal = true;
+        }
+      }
+
       // Use the gemma model as strictly requested
-      const resultText = await generateResilientContent(ai, "gemma-4-31b-it", promptText, {
+      const resultText = await generateResilientContent(ai, "gemma-4-31b-it", contents, {
         temperature: 0.2,
         systemInstruction,
+        skipTextExtraction: isMultimodal
       });
 
       if (!resultText) {

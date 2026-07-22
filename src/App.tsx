@@ -33,10 +33,15 @@ import {
   MapPin,
   Maximize2,
   Minimize2,
-  Edit3
+  Edit3,
+  Settings,
+  Home,
+  Zap,
+  HelpCircle,
+  CheckCircle2
 } from "lucide-react";
 import { AtsGauge } from "./components/AtsGauge";
-import logo from "./assets/logo.png";
+import logo from "./logo.png";
 
 // Ensure window types are known
 declare global {
@@ -89,7 +94,7 @@ const InteractiveLoader = ({ mode }: { mode: "ats" | "motivation" | "redesign" }
     ? { glow: "bg-emerald-500/20", border: "border-emerald-500/20 border-t-emerald-500", textIcon: "text-emerald-400", textDesc: "text-emerald-400", progress: "bg-emerald-500" }
     : mode === "redesign"
     ? { glow: "bg-yellow-500/20", border: "border-yellow-500/20 border-t-yellow-500", textIcon: "text-yellow-400", textDesc: "text-yellow-400", progress: "bg-yellow-500" }
-    : { glow: "bg-blue-500/20", border: "border-blue-500/20 border-t-blue-500", textIcon: "text-blue-400", textDesc: "text-blue-400", progress: "bg-blue-500" };
+    : { glow: "bg-indigo-500/20", border: "border-indigo-500/20 border-t-indigo-500", textIcon: "text-indigo-400", textDesc: "text-indigo-400", progress: "bg-indigo-500" };
 
   return (
     <div className="h-full flex flex-col items-center justify-center text-center py-20 px-6 space-y-6">
@@ -452,8 +457,13 @@ const focusContrastElement = (iframe: HTMLIFrameElement, idx: number) => {
 };
 
 export default function App() {
-  // Navigation Tabs: "ats" vs "motivation" vs "redesign"
-  const [activeMode, setActiveMode] = useState<"ats" | "motivation" | "redesign">("ats");
+  // Navigation Tabs: "home" vs "ats" vs "motivation" vs "redesign"
+  const [activeMode, setActiveMode] = useState<"home" | "ats" | "motivation" | "redesign">("home");
+
+  // Scroll to top of window whenever workflow mode changes
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [activeMode]);
 
   // --- Contrast Check States ---
   const [contrastIssues, setContrastIssues] = useState<ContrastIssue[]>([]);
@@ -472,7 +482,12 @@ export default function App() {
   const [redesignStyle, setRedesignStyle] = useState<"orthogonal" | "kurvlinear">("orthogonal");
   const [redesignPalette, setRedesignPalette] = useState<"monochromatic" | "split_complementary" | "triadic">("monochromatic");
   const [redesignBaseHue, setRedesignBaseHue] = useState<number>(45); // default bright golden-yellow
+  const [customColors, setCustomColors] = useState<Record<string, string>>({});
   const [redesignBackgroundType, setRedesignBackgroundType] = useState<"dark" | "light">("dark");
+
+  useEffect(() => {
+    setCustomColors({});
+  }, [redesignBaseHue, redesignPalette, redesignBackgroundType]);
   const [redesignSelectedStyle, setRedesignSelectedStyle] = useState<"orthogonal" | "kurvlinear">("orthogonal");
   const [isEditingEnabled, setIsEditingEnabled] = useState(false);
   const [isRedesignFullscreen, setIsRedesignFullscreen] = useState(false);
@@ -503,7 +518,12 @@ export default function App() {
   const [isDrawingSketch, setIsDrawingSketch] = useState(false);
   const [useSketchInAi, setUseSketchInAi] = useState(true);
   const [sketchGridString, setSketchGridString] = useState<string>("");
+  const [sketchMode, setSketchMode] = useState<"grid" | "freehand">("grid");
+  const [sketchPrompt, setSketchPrompt] = useState<string>("");
+  const [sketchDataUrl, setSketchDataUrl] = useState<string>("");
   const sketchCanvasRef = useRef<HTMLCanvasElement>(null);
+  const sketchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const sketchSnapshotRef = useRef<ImageData | null>(null);
 
   // Sampling pixel color helpers
   const parseRgb = (rgbStr: string): { r: number; g: number; b: number } | null => {
@@ -638,22 +658,28 @@ export default function App() {
     e.preventDefault();
     setIsDrawingSketch(true);
     const pos = getEventPos(e, canvas);
-    ctx.beginPath();
-    ctx.moveTo(pos.x, pos.y);
 
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.lineWidth = sketchBrushSize;
+    sketchStartPosRef.current = pos;
+    sketchSnapshotRef.current = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
-    if (sketchColor === "eraser") {
-      ctx.globalCompositeOperation = "destination-out";
-    } else {
-      ctx.globalCompositeOperation = "source-over";
-      ctx.strokeStyle = sketchColor;
+    if (sketchMode === "freehand") {
+      ctx.beginPath();
+      ctx.moveTo(pos.x, pos.y);
+
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.lineWidth = sketchBrushSize;
+
+      if (sketchColor === "eraser") {
+        ctx.globalCompositeOperation = "destination-out";
+      } else {
+        ctx.globalCompositeOperation = "source-over";
+        ctx.strokeStyle = sketchColor;
+      }
+
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
     }
-
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
   };
 
   const drawSketch = (
@@ -666,12 +692,43 @@ export default function App() {
 
     e.preventDefault();
     const pos = getEventPos(e, canvas);
-    ctx.lineTo(pos.x, pos.y);
-    ctx.stroke();
+
+    if (sketchMode === "grid") {
+      if (sketchStartPosRef.current && sketchSnapshotRef.current) {
+        // Clear back to starting state of this stroke
+        ctx.putImageData(sketchSnapshotRef.current, 0, 0);
+
+        // Draw straight line from start to current
+        ctx.beginPath();
+        ctx.moveTo(sketchStartPosRef.current.x, sketchStartPosRef.current.y);
+        ctx.lineTo(pos.x, pos.y);
+
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.lineWidth = sketchBrushSize;
+
+        if (sketchColor === "eraser") {
+          ctx.globalCompositeOperation = "destination-out";
+        } else {
+          ctx.globalCompositeOperation = "source-over";
+          ctx.strokeStyle = sketchColor;
+        }
+        ctx.stroke();
+      }
+    } else {
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+    }
   };
 
   const stopDrawingSketch = () => {
     setIsDrawingSketch(false);
+    sketchStartPosRef.current = null;
+    sketchSnapshotRef.current = null;
+    const canvas = sketchCanvasRef.current;
+    if (canvas) {
+      setSketchDataUrl(canvas.toDataURL());
+    }
     updateSketchGrid();
   };
 
@@ -681,8 +738,27 @@ export default function App() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    sketchStartPosRef.current = null;
+    sketchSnapshotRef.current = null;
     setSketchGridString("");
+    setSketchDataUrl("");
   };
+
+  // Restore sketch drawing onto canvas when canvas mounts or redesign generation finishes
+  useEffect(() => {
+    if (isManualSketchOpen && sketchCanvasRef.current && sketchDataUrl) {
+      const canvas = sketchCanvasRef.current;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        const img = new Image();
+        img.onload = () => {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0);
+        };
+        img.src = sketchDataUrl;
+      }
+    }
+  }, [isManualSketchOpen, isRedesignSending, sketchDataUrl]);
 
   // Helper to convert HSL to Hex
   const hslToHex = (h: number, s: number, l: number): string => {
@@ -807,7 +883,17 @@ export default function App() {
     };
   };
 
-  const activeColors = getPaletteColors(redesignBaseHue, redesignPalette, redesignBackgroundType);
+  const baseActiveColors = getPaletteColors(redesignBaseHue, redesignPalette, redesignBackgroundType);
+  const activeColors = {
+    ...baseActiveColors,
+    ...customColors
+  };
+  
+  // Re-evaluate primary/secondary aliases based on custom colors:
+  const isLightBg = redesignBackgroundType === "light";
+  activeColors.primary = isLightBg ? activeColors.primary_dark : activeColors.primary_light;
+  activeColors.secondary = isLightBg ? activeColors.secondary_dark : activeColors.secondary_light;
+
   const redesignIframeRef = useRef<HTMLIFrameElement>(null);
 
   const [isDraggingWheel, setIsDraggingWheel] = useState(false);
@@ -951,6 +1037,46 @@ export default function App() {
 
   // Manual Names to Mask (comma-separated, e.g., "Max Mustermann, Erika Musterfrau")
   const [manualNames, setManualNames] = useState("");
+  const [appliedNames, setAppliedNames] = useState("");
+
+  const handleConfirmNameMasking = (customName?: string) => {
+    const nameToConfirm = (customName !== undefined ? customName : manualNames).trim();
+    if (!nameToConfirm) {
+      setApiError("Bitte gib zuerst einen Namen zum Anonymisieren ein.");
+      return;
+    }
+    setAppliedNames(nameToConfirm);
+    setManualNames(nameToConfirm);
+
+    if (atsRawExtractedText) {
+      performMasking(atsRawExtractedText, nameToConfirm, setAtsMaskedText, false);
+    }
+    if (motivationExtractedText) {
+      performMasking(motivationExtractedText, nameToConfirm, setMotivationMaskedText, false);
+    }
+    if (jdExtractedText) {
+      performMasking(jdExtractedText, nameToConfirm, setJdMaskedText, true);
+    }
+    if (redesignExtractedText) {
+      performMasking(redesignExtractedText, nameToConfirm, setRedesignMaskedText, false);
+    }
+  };
+
+  const handleResetNameMasking = () => {
+    setAppliedNames("");
+    if (atsRawExtractedText) {
+      performMasking(atsRawExtractedText, "", setAtsMaskedText, false);
+    }
+    if (motivationExtractedText) {
+      performMasking(motivationExtractedText, "", setMotivationMaskedText, false);
+    }
+    if (jdExtractedText) {
+      performMasking(jdExtractedText, "", setJdMaskedText, true);
+    }
+    if (redesignExtractedText) {
+      performMasking(redesignExtractedText, "", setRedesignMaskedText, false);
+    }
+  };
 
   // --- Mode 1: ATS Resume States ---
   const [atsPdfFile, setAtsPdfFile] = useState<File | null>(null);
@@ -1048,21 +1174,17 @@ export default function App() {
       }
     }
     if (finalHtml) {
-      // Strip out contenteditable attributes so the downloaded file is a clean static HTML file with no edit behaviors
-      finalHtml = finalHtml.replace(/\s*contenteditable=(['"])[^'"]*\1/gi, "");
-      finalHtml = finalHtml.replace(/\s*contenteditable/gi, "");
-
-      // Strip out custom editable element CSS styling blocks entirely
-      finalHtml = finalHtml.replace(/\/\* Custom editable element styling.*?\*\/[^<]*/gs, "");
-      finalHtml = finalHtml.replace(/\[contenteditable=[^\]]+\]\s*\{[^}]*\}/gi, "");
-      finalHtml = finalHtml.replace(/\[contenteditable=[^\]]+\]:hover\s*\{[^}]*\}/gi, "");
-      finalHtml = finalHtml.replace(/\[contenteditable=[^\]]+\]:focus\s*\{[^}]*\}/gi, "");
+      // Ensure the downloaded HTML is editable
+      if (!/contenteditable/i.test(finalHtml)) {
+        finalHtml = finalHtml.replace(/<body/i, '<body contenteditable="true"');
+      }
 
       const blob = new Blob([finalHtml], { type: "text/html" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Redesign_${redesignSelectedDoc}.html`;
+      const docLabel = redesignSelectedDoc === "resume" ? "Lebenslauf" : "Motivationsschreiben";
+      a.download = `Redesign_${docLabel}.html`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1328,19 +1450,52 @@ export default function App() {
 
     // 3. Name Manual Masking
     if (namesInput.trim()) {
-      const namesToMask = namesInput.split(",").map(n => n.trim()).filter(Boolean);
-      namesToMask.forEach(name => {
-        if (name.length > 1) {
-          const regex = new RegExp(escapeRegExp(name), 'gi');
+      const STOP_WORDS = new Set(["von", "vom", "zu", "zum", "der", "die", "das", "dem", "den", "des", "und", "mit", "aus", "bei", "für", "dr", "prof", "ing", "mag", "ba", "ma", "phd", "mr", "mrs", "ms"]);
+      
+      const candidateSet = new Set<string>();
+      
+      // Split by comma for multiple distinct name entries
+      const entries = namesInput.split(",").map(e => e.trim()).filter(Boolean);
+      
+      entries.forEach(entry => {
+        candidateSet.add(entry);
+        
+        // Extract individual words (support German umlauts)
+        const words = entry.split(/[\s,]+/).map(w => w.replace(/^[^\wäöüÄÖÜß]+|[^\wäöüÄÖÜß]+$/g, '').trim()).filter(Boolean);
+        
+        if (words.length > 1) {
+          // Reversed full name: e.g. "Mustermann Max"
+          const reversed = [...words].reverse().join(" ");
+          candidateSet.add(reversed);
+          
+          // Comma inverted variants: "Mustermann, Max", "Max, Mustermann"
+          candidateSet.add(`${words[words.length - 1]}, ${words.slice(0, -1).join(" ")}`);
+          candidateSet.add(`${words.slice(0, -1).join(" ")}, ${words[words.length - 1]}`);
+        }
+        
+        // Individual name components
+        words.forEach(w => {
+          const lower = w.toLowerCase();
+          if (w.length >= 2 && !STOP_WORDS.has(lower)) {
+            candidateSet.add(w);
+          }
+        });
+      });
+
+      // Sort candidates by length descending so longer phrases match first
+      const sortedCandidates = Array.from(candidateSet)
+        .filter(cand => cand.length >= 2)
+        .sort((a, b) => b.length - a.length);
+
+      sortedCandidates.forEach(cand => {
+        try {
+          const regex = new RegExp(`(?<![a-zA-ZäöüÄÖÜß0-9])${escapeRegExp(cand)}(?![a-zA-ZäöüÄÖÜß0-9])`, 'gi');
+          tempText = tempText.replace(regex, "[NAME_MASKED]");
+        } catch (e) {
+          const regex = new RegExp(`\\b${escapeRegExp(cand)}\\b`, 'gi');
           tempText = tempText.replace(regex, "[NAME_MASKED]");
         }
       });
-      // Additional: Explicitly mask the name if it is just a single word (e.g., firstname)
-      const firstName = namesInput.split(" ")[0].trim();
-      if (firstName.length > 2) {
-        const regex = new RegExp(escapeRegExp(firstName), 'gi');
-        tempText = tempText.replace(regex, "[NAME_MASKED]");
-      }
     }
 
     setMaskedText(tempText);
@@ -1351,6 +1506,24 @@ export default function App() {
   function escapeRegExp(string: string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
+
+  // Auto-masking synchronization whenever appliedNames or raw texts change
+  useEffect(() => {
+    if (appliedNames.trim()) {
+      if (atsRawExtractedText) {
+        performMasking(atsRawExtractedText, appliedNames, setAtsMaskedText, false);
+      }
+      if (motivationExtractedText) {
+        performMasking(motivationExtractedText, appliedNames, setMotivationMaskedText, false);
+      }
+      if (jdExtractedText) {
+        performMasking(jdExtractedText, appliedNames, setJdMaskedText, true);
+      }
+      if (redesignExtractedText) {
+        performMasking(redesignExtractedText, appliedNames, setRedesignMaskedText, false);
+      }
+    }
+  }, [appliedNames, atsRawExtractedText, motivationExtractedText, jdExtractedText, redesignExtractedText]);
 
   // --- ATS Compatibility & Metrics Calculator ---
   const getAtsMetrics = (text: string, parsedData: any) => {
@@ -1649,7 +1822,7 @@ export default function App() {
     try {
       const extracted = await extractTextFromFile(file);
       setAtsRawExtractedText(extracted);
-      performMasking(extracted, manualNames, setAtsMaskedText, false);
+      performMasking(extracted, appliedNames, setAtsMaskedText, false);
     } catch (err: any) {
       if (err.message === "UNREADABLE_FILE_RELAX_GDPR_REQUIRED") {
         setUnreadableFile(file);
@@ -1675,7 +1848,7 @@ export default function App() {
     try {
       const extracted = await extractTextFromFile(file);
       setMotivationExtractedText(extracted);
-      performMasking(extracted, manualNames, setMotivationMaskedText, false);
+      performMasking(extracted, appliedNames, setMotivationMaskedText, false);
     } catch (err: any) {
       if (err.message === "UNREADABLE_FILE_RELAX_GDPR_REQUIRED") {
         setUnreadableFile(file);
@@ -1726,7 +1899,7 @@ export default function App() {
     try {
       const extracted = await extractTextFromFile(file);
       setRedesignExtractedText(extracted);
-      performMasking(extracted, manualNames, setRedesignMaskedText, false);
+      performMasking(extracted, appliedNames, setRedesignMaskedText, false);
     } catch (err: any) {
       if (err.message === "UNREADABLE_FILE_RELAX_GDPR_REQUIRED") {
         setUnreadableFile(file);
@@ -1841,6 +2014,27 @@ export default function App() {
     try {
       const colors = getPaletteColors(redesignBaseHue, redesignPalette, redesignBackgroundType);
 
+      // Sample sketch grid and image directly from canvas if open and sketch active
+      let activeSketchGrid: string | undefined = undefined;
+      let activeSketchImage: string | undefined = undefined;
+      if (isManualSketchOpen && useSketchInAi) {
+        if (sketchCanvasRef.current) {
+          const grid = sampleCanvasToGrid(sketchCanvasRef.current);
+          if (grid && grid.length > 0) {
+            const textRepr = grid.map(row => row.join(" ")).join("\n");
+            if (/[BYRIGP]/.test(textRepr)) {
+              activeSketchGrid = textRepr;
+            }
+          }
+          activeSketchImage = sketchCanvasRef.current.toDataURL("image/png");
+        } else if (sketchDataUrl) {
+          activeSketchImage = sketchDataUrl;
+        }
+      }
+      if (!activeSketchGrid && isManualSketchOpen && useSketchInAi && sketchGridString.trim() && /[BYRIGP]/.test(sketchGridString)) {
+        activeSketchGrid = sketchGridString;
+      }
+
       // Fetch Single Style Redesign
       const result = await fetch("/api/redesign-cv", {
         method: "POST",
@@ -1857,7 +2051,10 @@ export default function App() {
           secondary_light: colors.secondary_light,
           secondary_dark: colors.secondary_dark,
           backgroundType: redesignBackgroundType,
-          manualSketchGrid: (isManualSketchOpen && useSketchInAi && sketchGridString.trim()) ? sketchGridString : undefined
+          manualSketchGrid: activeSketchGrid,
+          sketchImage: activeSketchImage,
+          sketchMode: isManualSketchOpen ? sketchMode : undefined,
+          sketchPrompt: (isManualSketchOpen && sketchPrompt.trim()) ? sketchPrompt.trim() : undefined
         })
       });
       if (!result.ok) {
@@ -1873,6 +2070,7 @@ export default function App() {
         demasked = demasked.replace(/\[NAME_MASKED\]/g, realName);
         demasked = demasked.replace(/\[EMAIL_MASKED\]/g, maskMap.email || "");
         demasked = demasked.replace(/\[PHONE_MASKED\]/g, maskMap.phone || "");
+        demasked = demasked.replace(/\[LOGO_PLACEHOLDER\]/g, "/logo.png");
         
         // Inject avatar base64 if provided, otherwise use a default placeholder or empty string
         if (redesignAvatarBase64) {
@@ -1897,6 +2095,7 @@ export default function App() {
       };
 
       setRedesignResult(finalResult);
+      setRedesignSelectedStyle(redesignStyle);
       const isLightBg = redesignBackgroundType === "light";
       const actualBgColor = isLightBg ? "#FFFFFF" : "#000000";
       const actualTextColor = isLightBg ? "#1E293B" : "#F8FAFC";
@@ -2234,105 +2433,332 @@ export default function App() {
 
       {/* Navigation Header */}
       <header className="relative border-b border-slate-800 bg-slate-900/80 backdrop-blur-md z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-row items-center justify-between gap-4">
           <div className="flex items-center space-x-3">
-            <div className="relative group z-[100]">
-              <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl overflow-hidden border-2 border-slate-700/50 group-hover:border-emerald-500/50 transition-colors cursor-pointer bg-slate-800 flex items-center justify-center shadow-lg">
-                <img src={logo} alt="Lazy-HR-Workaround Logo" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.parentElement?.classList.add('bg-emerald-600') }} />
-                <ShieldCheck className="h-8 w-8 text-white absolute -z-10" />
+            <div className="relative group z-50">
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl overflow-hidden border border-slate-700/80 bg-slate-950 flex items-center justify-center p-2 shadow-xl group-hover:border-yellow-500/60 transition-all relative z-10 cursor-pointer">
+                <img 
+                  src={logo} 
+                  alt="Lazy-HR-Workaround Logo" 
+                  className="w-full h-full object-contain relative z-10" 
+                  onError={(e) => { 
+                    e.currentTarget.src = "/logo.png"; 
+                  }} 
+                />
               </div>
               
-              <div className="absolute top-24 sm:top-28 left-0 w-80 sm:w-96 bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 pointer-events-none origin-top-left z-[100]">
-                <img src={logo} alt="Lazy-HR-Workaround Original" className="w-full h-auto rounded-lg mb-3 border border-slate-800" onError={(e) => e.currentTarget.style.display = 'none'} />
-                
-                <h4 className="font-bold text-slate-100 text-sm mb-2 leading-tight">Lazy-HR-Workaround: Intelligente Automatisierung für deinen Bewerbungserfolg</h4>
-                <div className="space-y-2 text-[11px] text-slate-300 leading-relaxed">
-                  <p>Schluss mit frustrierenden Bewerbungsprozessen und ungesehenen Anschreiben! Moderne Unternehmen nutzen Algorithmen, um Profile zu filtern – oft auf Kosten der Menschlichkeit. Lazy-HR-Workaround dreht den Spieß um und schlägt die Systeme mit ihren eigenen Waffen.</p>
-                  <p>Diese App ist die Brücke zwischen deinem Talent und den automatisierten Recruiting-Plattformen (ATS) der Konzerne. Statt unzählige Stunden in starre Formulare und künstlich wirkende Anschreiben zu stecken, optimiert und synchronisiert Lazy-HR-Workaround deine Daten im Hintergrund. Wir liefern den HR-Parsern exakt die strukturierten Payloads und Formate, nach denen sie suchen.</p>
-                  <p className="font-semibold text-slate-200 mt-3 border-t border-slate-800 pt-2">Deine Vorteile auf einen Blick:</p>
-                  <ul className="list-disc pl-4 space-y-1.5 text-slate-300">
-                    <li><strong className="text-emerald-400">Maximale Effizienz:</strong> Überspringe den Ineffizienz-Ballast klassischer Online-Bewerbungen.</li>
-                    <li><strong className="text-emerald-400">Perfekte Parser-Kompatibilität:</strong> Deine Daten kommen garantiert genau so an, dass der Algorithmus dich positiv bewertet.</li>
-                    <li><strong className="text-emerald-400">Prozess-Optimierung:</strong> Überlass das fehleranfällige System-Füttern einer vollautomatischen Architektur und konzentriere dich auf das, was wirklich zählt: das persönliche Gespräch.</li>
-                  </ul>
-                  <p className="italic text-emerald-400 mt-3 pt-2 border-t border-slate-800 font-medium">Schluss mit dem HR-Frust. Lass die Maschinen für dich arbeiten!</p>
+              <div className="absolute top-full left-0 pt-2 w-80 sm:w-96 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 origin-top-left z-50">
+                <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 shadow-2xl">
+                  <img 
+                    src={logo} 
+                    alt="Lazy-HR-Workaround Original" 
+                    className="w-full h-auto max-h-36 object-contain rounded-lg mb-3 border border-slate-800 bg-slate-950 p-2" 
+                    onError={(e) => { e.currentTarget.src = "/logo.png"; }} 
+                  />
+                  
+                  <h4 className="font-bold text-slate-100 text-sm mb-2 leading-tight">Lazy-HR-Workaround: Intelligente Automatisierung für deinen Bewerbungserfolg</h4>
+                  <div className="space-y-2 text-[11px] text-slate-300 leading-relaxed">
+                    <p>Schluss mit frustrierenden Bewerbungsprozessen und ungesehenen Anschreiben! Moderne Unternehmen nutzen Algorithmen, um Profile zu filtern – oft auf Kosten der Menschlichkeit. Lazy-HR-Workaround dreht den Spieß um und schlägt die Systeme mit ihren eigenen Waffen.</p>
+                    <p>Diese App ist die Brücke zwischen deinem Talent und den automatisierten Recruiting-Plattformen (ATS) der Konzerne. Statt unzählige Stunden in starre Formulare und künstlich wirkende Anschreiben zu stecken, optimiert und synchronisiert Lazy-HR-Workaround deine Daten im Hintergrund. Wir liefern den HR-Parsern exakt die strukturierten Payloads und Formate, nach denen sie suchen.</p>
+                    <p className="font-semibold text-slate-200 mt-3 border-t border-slate-800 pt-2">Deine Vorteile auf einen Blick:</p>
+                    <ul className="list-disc pl-4 space-y-1.5 text-slate-300">
+                      <li><strong className="text-emerald-400">Maximale Effizienz:</strong> Überspringe den Ineffizienz-Ballast klassischer Online-Bewerbungen.</li>
+                      <li><strong className="text-emerald-400">Perfekte Parser-Kompatibilität:</strong> Deine Daten kommen garantiert genau so an, dass der Algorithmus dich positiv bewertet.</li>
+                      <li><strong className="text-emerald-400">Prozess-Optimierung:</strong> Überlass das fehleranfällige System-Füttern einer vollautomatischen Architektur und konzentriere dich auf das, was wirklich zählt: das persönliche Gespräch.</li>
+                    </ul>
+                    <p className="italic text-emerald-400 mt-3 pt-2 border-t border-slate-800 font-medium">Schluss mit dem HR-Frust. Lass die Maschinen für dich arbeiten!</p>
+                  </div>
                 </div>
               </div>
             </div>
             <div>
-              <h1 className="text-xl sm:text-3xl font-bold tracking-tight font-display text-white">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight font-display text-white">
                 Lazy-HR-Workaround
               </h1>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1">
+              <p className="text-xs text-slate-400">
                 Intelligente Automatisierung für deinen Bewerbungserfolg
               </p>
             </div>
           </div>
 
-          <div className="flex flex-row items-center gap-2 bg-slate-800/80 p-2 rounded-xl border border-slate-700/50 w-full lg:w-auto overflow-x-auto snap-x mt-4 sm:mt-0">
+          {activeMode !== "home" && (
             <button
-              onClick={() => setActiveMode("ats")}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "ats" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"}`}
-              id="tab-mode-ats"
+              onClick={() => setActiveMode("home")}
+              className="flex items-center gap-2 px-3.5 py-2 text-xs font-bold text-slate-300 hover:text-white bg-slate-800/90 hover:bg-slate-700 rounded-xl border border-slate-700 transition shadow-sm"
             >
-              <Layers className="h-4 w-4 shrink-0" />
-              ATS-Optimierung
+              <Home className="h-4 w-4 text-indigo-400" />
+              <span>Startseite</span>
             </button>
-            <button
-              onClick={() => setActiveMode("motivation")}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "motivation" ? "bg-blue-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"}`}
-              id="tab-mode-motivation"
-            >
-              <Briefcase className="h-4 w-4 shrink-0" />
-              Motivationsschreiben
-            </button>
-            <button
-              onClick={() => setActiveMode("redesign")}
-              className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg transition whitespace-nowrap snap-center ${activeMode === "redesign" ? "bg-yellow-500 text-slate-950 shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"}`}
-              id="tab-mode-redesign"
-            >
-              <Sparkles className="h-4 w-4 shrink-0" />
-              Redesign Workflow
-            </button>
-          </div>
+          )}
         </div>
       </header>
 
       {/* Main Workspace */}
       <main className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col gap-8 z-10 w-full">
         
-        {/* Settings & Inputs */}
-        <section className="w-full space-y-6">
-          
-          {/* Dynamic Content Forms according to Selected Mode */}
-          {activeMode === "ats" ? (
+        {activeMode === "home" ? (
+            /* STARTSEITE & SZENARIEN-ÜBERSICHT */
+            <div className="space-y-10 py-2">
+              {/* Hero Banner with Large Logo Emblem */}
+              <motion.div 
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5 }}
+                className="relative text-center space-y-6 max-w-4xl mx-auto"
+              >
+                {/* Background Glow */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 sm:w-96 sm:h-96 bg-gradient-to-tr from-yellow-500/20 via-emerald-500/15 to-indigo-500/20 rounded-full blur-3xl pointer-events-none z-0" />
+
+                {/* GROSSES WAPPEN LOGO */}
+                <div className="inline-block relative z-10 cursor-default select-none my-2">
+                  <div className="w-36 h-36 sm:w-48 sm:h-48 md:w-56 md:h-56 mx-auto rounded-3xl p-4 bg-slate-900/90 border-2 border-yellow-500/60 shadow-2xl shadow-yellow-500/20 flex items-center justify-center relative z-10 overflow-hidden backdrop-blur-md">
+                    <div className="absolute inset-0 bg-gradient-to-tr from-yellow-500/10 via-transparent to-emerald-500/10 opacity-80 pointer-events-none z-0" />
+                    <img 
+                      src={logo} 
+                      alt="Lazy-HR-Workaround Wappen Logo" 
+                      className="w-full h-full object-contain relative z-20 drop-shadow-[0_10px_25px_rgba(0,0,0,0.8)]"
+                      onError={(e) => { e.currentTarget.src = "/logo.png"; }}
+                    />
+                  </div>
+                  <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-yellow-500 text-slate-950 font-black text-[11px] uppercase tracking-wider px-3.5 py-1 rounded-full shadow-lg border border-yellow-300 flex items-center gap-1.5 whitespace-nowrap z-30">
+                    <ShieldCheck className="h-3.5 w-3.5" /> Lazy-HR-Workaround
+                  </div>
+                </div>
+
+                {/* Hero Headline & Intro */}
+                <div className="space-y-3 pt-3">
+                  <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight leading-tight font-display">
+                    Schlage automatisierte HR-Filter mit ihren eigenen Waffen.
+                  </h1>
+                  <p className="text-sm sm:text-base text-slate-300 max-w-3xl mx-auto leading-relaxed">
+                    Schluss mit ungesehenen Bewerbungen und kalten Standardabsagen. <strong className="text-yellow-400 font-semibold">Lazy-HR-Workaround</strong> führt dich Schritt für Schritt von der ATS-Konformitätsprüfung über das maßgeschneiderte Motivationsschreiben bis hin zum atemberaubenden, 100% editierbaren HTML/CSS-Redesign.
+                  </p>
+                </div>
+              </motion.div>
+
+              {/* Detail-Erklärungen der 3 Szenarien */}
+                <div className="space-y-6 max-w-5xl mx-auto pt-4">
+                  <div className="text-center space-y-1.5">
+                    <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                      Die 3 Szenarien im Detail
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Klicke auf ein Szenario, um die Eingabemaske direkt zu öffnen.
+                    </p>
+                  </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+                  
+                  {/* Szenario 1 Card */}
+                  <motion.div 
+                    whileHover={{ y: -4 }}
+                    transition={{ duration: 0.2 }}
+                    className="bg-slate-900/80 border border-emerald-500/30 rounded-2xl p-6 shadow-xl flex flex-col justify-between space-y-5 relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+                    
+                    <div className="space-y-4 relative z-10">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-400 bg-emerald-950/80 border border-emerald-800/50 px-2.5 py-1 rounded-full">
+                          Szenario 1
+                        </span>
+                        <Layers className="h-6 w-6 text-emerald-400" />
+                      </div>
+
+                      <h3 className="text-base font-bold text-white leading-tight">
+                        ATS-Optimierung & Unsichtbare Textschicht
+                      </h3>
+
+                      <div className="space-y-2.5 text-xs text-slate-300 leading-relaxed">
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-emerald-400 font-semibold block mb-1">Was macht die Optimierung?</strong>
+                          Wir analysieren deinen Lebenslauf nicht nur auf Parser-Fehler, sondern betten ein **0.05% transparentes Text-Layer** (unsichtbarer Volltext-Overlay für ATS-Parser wie Workday, Personio, SAP) ein.
+                        </div>
+
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-emerald-400 font-semibold block mb-1">Volle ATS-Konformität ohne Design-Verlust:</strong>
+                          Du musst dein schönes, individuelles Layout nicht opfern! Das unsichtbare 0.05%-Layer liefert dem ATS-System alle Schlüsselbegriffe, während das sichtbare Design 100% perfekt erhalten bleibt.
+                        </div>
+
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-emerald-400 font-semibold block mb-1">Warum unschlagbar?</strong>
+                          Kein mühsames Umformatieren in langweilige Standard-Vorlagen nötig. 100% Parser-Erfolg bei maximaler visueller Freiheit.
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setActiveMode("ats")}
+                      className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2 mt-auto relative z-10 cursor-pointer"
+                    >
+                      <Layers className="h-4 w-4" />
+                      ATS-Prüfung starten
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </motion.div>
+
+                  {/* Szenario 2 Card */}
+                  <motion.div 
+                    whileHover={{ y: -4 }}
+                    transition={{ duration: 0.2 }}
+                    className="bg-slate-900/80 border border-indigo-500/30 rounded-2xl p-6 shadow-xl flex flex-col justify-between space-y-5 relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                    
+                    <div className="space-y-4 relative z-10">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-400 bg-indigo-950/80 border border-indigo-800/50 px-2.5 py-1 rounded-full">
+                          Szenario 2
+                        </span>
+                        <Briefcase className="h-6 w-6 text-indigo-400" />
+                      </div>
+
+                      <h3 className="text-base font-bold text-white leading-tight">
+                        Motivationsschreiben & Stellen-Matching
+                      </h3>
+
+                      <div className="space-y-2.5 text-xs text-slate-300 leading-relaxed">
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-indigo-400 font-semibold block mb-1">Wie sieht die Hilfe aus?</strong>
+                          Die KI vergleicht deinen Lebenslauf mit den Anforderungen der Zielstelle und verfasst ein maßgeschneidertes Anschreiben in genau 3 Absätzen.
+                        </div>
+
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-indigo-400 font-semibold block mb-1">Was wird gebraucht?</strong>
+                          1. Dein Lebenslauf (PDF/Text).<br />
+                          2. Die Stellenausschreibung (einfach im Browser als PDF drucken oder als Text einfügen).
+                        </div>
+
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-indigo-400 font-semibold block mb-1">Keywords & Adressen:</strong>
+                          Spezifische Keywords der Firma werden flüssig eingewoben. Fehlende Adressen kannst du bequem manuell ergänzen.
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setActiveMode("motivation")}
+                      className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 mt-auto relative z-10 cursor-pointer"
+                    >
+                      <Briefcase className="h-4 w-4" />
+                      Anschreiben erstellen
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </motion.div>
+
+                  {/* Szenario 3 Card */}
+                  <motion.div 
+                    whileHover={{ y: -4 }}
+                    transition={{ duration: 0.2 }}
+                    className="bg-slate-900/80 border border-yellow-500/30 rounded-2xl p-6 shadow-xl flex flex-col justify-between space-y-5 relative overflow-hidden"
+                  >
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-500/10 rounded-full blur-2xl pointer-events-none" />
+                    
+                    <div className="space-y-4 relative z-10">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-extrabold uppercase tracking-widest text-yellow-400 bg-yellow-950/80 border border-yellow-800/50 px-2.5 py-1 rounded-full">
+                          Szenario 3
+                        </span>
+                        <Sparkles className="h-6 w-6 text-yellow-400" />
+                      </div>
+
+                      <h3 className="text-base font-bold text-white leading-tight">
+                        Harmonisches HTML & CSS Redesign
+                      </h3>
+
+                      <div className="space-y-2.5 text-xs text-slate-300 leading-relaxed">
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-yellow-400 font-semibold block mb-1">HTML Komplettüberarbeitung:</strong>
+                          Erzeugt druckfertiges HTML/CSS. Der bereits installierte Webbrowser genügt völlig, um das Dokument vollumfänglich und betriebssystemunabhängig darzustellen, zu bearbeiten und zu drucken.
+                        </div>
+
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-yellow-400 font-semibold block mb-1">Layout & Skizze:</strong>
+                          Wähle zwischen <strong>Orthogonal</strong> (Raster) & <strong>Kurvlinear</strong> (Wellen) oder zeichne dein individuelles Layout auf dem DIN A4-Zeichenbrett.
+                        </div>
+
+                        <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80">
+                          <strong className="text-yellow-400 font-semibold block mb-1">Live Edit & Farben im Browser:</strong>
+                          Editiere alle Texte direkt im Vorschau-Dokument in Echtzeit und passe die 5-Farben-Harmonie inkl. WCAG-Kontrastprüfer individuell an.
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setActiveMode("redesign")}
+                      className="w-full py-3 bg-yellow-500 hover:bg-yellow-400 text-slate-950 font-bold rounded-xl text-xs transition shadow-lg shadow-yellow-500/20 flex items-center justify-center gap-2 mt-auto relative z-10 cursor-pointer"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      HTML-Redesign starten
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </motion.div>
+
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Settings & Inputs */}
+              <section className="w-full space-y-6">
+                {/* Dynamic Content Forms according to Selected Mode */}
+              {activeMode === "ats" ? (
             /* ATS Optimierung Upload & Workflow Card */
             <div className={`rounded-2xl border p-6 space-y-6 shadow-xl backdrop-blur-sm transition-all duration-300 ${
               unreadableType === "ats" 
                 ? "bg-red-950/20 border-red-500/60 ring-2 ring-red-500/20 shadow-red-950/30" 
                 : "bg-slate-900/60 border-slate-800"
             }`}>
-              <div className="border-b border-slate-800 pb-3">
-                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                  <Layers className={`h-4 w-4 ${unreadableType === "ats" ? "text-red-400 animate-pulse" : "text-emerald-400"}`} />
-                  ATS-Optimierung Workflow
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Bitte füllen Sie die Schritte von oben nach unten aus.
-                </p>
+              <div className="border-b border-slate-800 pb-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                    <Layers className={`h-4 w-4 ${unreadableType === "ats" ? "text-red-400 animate-pulse" : "text-emerald-400"}`} />
+                    Szenario 1: ATS-Optimierung & Unsichtbare Textschicht
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Analyse und Optimierung deines Lebenslaufs für ATS-Parser.
+                  </p>
+                </div>
+                <div className="bg-emerald-950/80 border border-emerald-500/40 text-emerald-400 font-extrabold text-[10px] px-2.5 py-1 rounded-full flex items-center gap-1.5 shrink-0">
+                  <ShieldCheck className="h-3.5 w-3.5" /> 0.05% Transparent-Layer Garantie
+                </div>
               </div>
 
-              {/* SCHRITT 1 */}
+              {/* Notice Box: 0.05% Transparent Layer Explanation */}
+              <div className="bg-emerald-950/30 border border-emerald-500/25 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-slate-300 shadow-inner">
+                <ShieldCheck className="h-4.5 w-4.5 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <span className="font-bold text-emerald-300 text-[11px] block">
+                    Garantierte ATS-Lesbarkeit ohne Design-Kompromiss:
+                  </span>
+                  <p className="text-[10px] text-slate-300 leading-relaxed">
+                    Bei der Aufbereitung fügt das System ein **0.05% transparentes Text-Layer** (unsichtbaren Volltext) ein. Personal-Parser (Workday, Personio, SAP) lesen alle Keywords 100% fehlerfrei aus, während dein optisches Layout unverändert bleibt!
+                  </p>
+                </div>
+              </div>
+
+              {/* LEBENSLAUF HOCHLADEN / EINFÜGEN */}
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
-                    unreadableType === "ats" 
-                      ? "bg-red-600/20 text-red-400 border-red-500/30" 
-                      : "bg-emerald-600/20 text-emerald-400 border-emerald-500/30"
-                  }`}>1</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Lebenslauf einfügen (PDF oder Bild)
-                  </label>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
+                      (atsRawExtractedText || parsedResumeData)
+                        ? "bg-emerald-500 text-slate-950 border-emerald-400"
+                        : unreadableType === "ats" 
+                          ? "bg-red-600/20 text-red-400 border-red-500/30" 
+                          : "bg-emerald-600/20 text-emerald-400 border-emerald-500/30"
+                    }`}>
+                      {(atsRawExtractedText || parsedResumeData) ? "✓" : "1"}
+                    </span>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Punkt 1: Lebenslauf einfügen (PDF oder Bild)
+                    </label>
+                  </div>
+                  {(atsRawExtractedText || parsedResumeData) && (
+                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+                      Punkt 1 abgeschlossen
+                    </span>
+                  )}
                 </div>
                 
                 {unreadableType === "ats" && unreadableFile ? (
@@ -2415,7 +2841,7 @@ export default function App() {
                     <div className="flex items-center justify-between border-b border-slate-800/60 pb-2">
                       <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
                         <Gauge className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
-                        ATS-Konformitäts-Analyse
+                        ATS-Konformitäts-Analyse & Score
                       </h4>
                       <span className="text-[10px] text-slate-400 font-mono">Real-time D3 Engine</span>
                     </div>
@@ -2547,103 +2973,139 @@ export default function App() {
                 )}
               </div>
 
-              {/* SCHRITT 2 */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">2</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Namen eingeben
-                  </label>
-                </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={manualNames}
-                    onChange={(e) => setManualNames(e.target.value)}
-                    placeholder="Vorname Nachname, z.B. Max Mustermann"
-                    className="w-full text-xs bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
-                    id="manual-names-input"
-                  />
-                  <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
-                    <User className="h-3.5 w-3.5" />
-                  </div>
-                </div>
-                <span className="text-[10px] text-slate-500 mt-1 block leading-relaxed">
-                  Trage deinen Namen ein (kommagetrennt für Varianten), um ihn lokal unkenntlich zu machen.
-                </span>
-              </div>
-
-              {/* SCHRITT 3 */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">3</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Anonymisieren Button
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleManualNameMasking(true)}
-                  disabled={!atsRawExtractedText}
-                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-950 disabled:text-slate-600 disabled:border-slate-800 text-slate-200 rounded-lg text-xs font-bold border border-slate-700 transition"
-                  id="btn-mask-names-action"
+              {/* SCHRITT 2: ANONYMISIERUNG (WIRDT ERST FREIGESCHALTET, WENN SCHRITT 1 AUSGEFÜLLT IST) */}
+              {(!!atsRawExtractedText || !!parsedResumeData) && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-3 pt-2 border-t border-slate-800/80"
                 >
-                  Daten jetzt anonymisieren
-                </button>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-500 text-slate-950 text-[10px] font-bold border border-emerald-400">
+                        {appliedNames.trim() ? "✓" : "2"}
+                      </span>
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Punkt 2: Namen-Anonymisierung
+                      </label>
+                    </div>
+                  </div>
 
-                {atsMaskedText && (
-                  <motion.div 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ duration: 0.5 }}
-                    className="space-y-2 pt-2"
-                  >
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-slate-400 text-[11px]">Vorschau des anonymisierten Payloads:</span>
+                  {/* Falls Name bereits bestätigt wurde -> Fenster überspringen & unaufdringlichen Badge anzeigen */}
+                  {appliedNames.trim() ? (
+                    <div className="bg-slate-950/80 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between text-xs shadow-sm">
+                      <div className="flex items-center gap-2 text-emerald-300 font-medium">
+                        <ShieldCheck className="h-4 w-4 text-emerald-400 shrink-0" />
+                        <span>Name <strong>"{appliedNames}"</strong> wurde anonymisiert.</span>
+                      </div>
                       <button
-                        onClick={() => triggerCopy(atsMaskedText, "masked-cv")}
-                        className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 text-[10px]"
+                        type="button"
+                        onClick={handleResetNameMasking}
+                        className="text-[10px] text-slate-400 hover:text-white underline shrink-0 ml-2 cursor-pointer"
                       >
-                        {copiedSection === "masked-cv" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                        {copiedSection === "masked-cv" ? "Kopiert" : "Kopieren"}
+                        Name ändern
                       </button>
                     </div>
-                    <textarea
-                      value={atsMaskedText}
-                      onChange={(e) => setAtsMaskedText(e.target.value)}
-                      className="w-full h-32 bg-slate-950 text-slate-300 border border-slate-800 rounded-lg p-2.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-                      id="ai-cv-textarea"
-                    />
-                  </motion.div>
-                )}
-              </div>
-
-              {/* SCHRITT 4 / ÜBERGABE KI */}
-              <div className="pt-4 border-t border-slate-800/80 space-y-3">
-                <div className="bg-slate-950/60 rounded-xl border border-slate-800/50 p-3 space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-slate-300">
-                    <Sparkles className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
-                    <span className="text-[11px] font-bold tracking-tight text-white">Gemma-KI-Engine (Aktiv)</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-normal">
-                    Ausfallsichere Gemma-Modellkette (Gemma 4-31B &rarr; Gemma 4-26B). Die Verarbeitung erfolgt DSGVO-konform mit automatischem Failover.
-                  </p>
-                </div>
-
-                <button
-                  onClick={sendAtsToAI}
-                  disabled={isAtsSending || !atsRawExtractedText}
-                  className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/15 flex items-center justify-center gap-2"
-                  id="btn-process-cv-ai"
-                >
-                  {isAtsSending ? (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
+                    <div className="space-y-2.5 bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={manualNames}
+                          onChange={(e) => setManualNames(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleConfirmNameMasking();
+                            }
+                          }}
+                          placeholder="Vorname Nachname, z.B. Max Mustermann"
+                          className="w-full text-xs bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-emerald-500/50"
+                          id="manual-names-input"
+                        />
+                        <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
+                          <User className="h-3.5 w-3.5" />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-slate-500 leading-relaxed">
+                          Trage deinen Namen ein und klicke auf Anonymisieren, um ihn im Dokument zu maskieren.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmNameMasking()}
+                          disabled={!atsRawExtractedText && !parsedResumeData}
+                          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md shrink-0 cursor-pointer"
+                          id="btn-mask-names-action"
+                        >
+                          Anonymisieren
+                        </button>
+                      </div>
+                    </div>
                   )}
-                  {isAtsSending ? "KI analysiert und strukturiert..." : "Anonymisierten Text an KI senden"}
-                </button>
-              </div>
+                </motion.div>
+              )}
+
+              {/* SCHRITT 3: VORSCHAU PAYLOAD & KI-ANALYSE */}
+              {(!!atsRawExtractedText || !!parsedResumeData) && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-3 pt-3 border-t border-slate-800/80"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-emerald-600/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30">3</span>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Punkt 3: Anonymisierte Vorschau &amp; KI-Strukturierung
+                    </label>
+                  </div>
+
+                  {atsMaskedText && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-400 text-[11px]">Vorschau des anonymisierten Payloads:</span>
+                        <button
+                          onClick={() => triggerCopy(atsMaskedText, "masked-cv")}
+                          className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 text-[10px]"
+                        >
+                          {copiedSection === "masked-cv" ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                          {copiedSection === "masked-cv" ? "Kopiert" : "Kopieren"}
+                        </button>
+                      </div>
+                      <textarea
+                        value={atsMaskedText}
+                        onChange={(e) => setAtsMaskedText(e.target.value)}
+                        className="w-full h-28 bg-slate-950 text-slate-300 border border-slate-800 rounded-lg p-2.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                        id="ai-cv-textarea"
+                      />
+                    </div>
+                  )}
+
+                  <div className="bg-slate-950/60 rounded-xl border border-slate-800/50 p-3 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-slate-300">
+                      <Sparkles className="h-3.5 w-3.5 text-emerald-400 animate-pulse" />
+                      <span className="text-[11px] font-bold tracking-tight text-white">Gemma-KI-Engine (Aktiv)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      Ausfallsichere Gemma-Modellkette. Die Verarbeitung erfolgt DSGVO-konform mit automatischem Failover.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={sendAtsToAI}
+                    disabled={isAtsSending || !atsRawExtractedText}
+                    className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/15 flex items-center justify-center gap-2 cursor-pointer"
+                    id="btn-process-cv-ai"
+                  >
+                    {isAtsSending ? (
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    {isAtsSending ? "KI analysiert und strukturiert..." : "Anonymisierten Text an KI senden"}
+                  </button>
+                </motion.div>
+              )}
             </div>
           ) : activeMode === "motivation" ? (
             /* Motivationsschreiben Mode Inputs - Vertical Step Workflow */
@@ -2652,27 +3114,40 @@ export default function App() {
                 ? "bg-red-950/20 border-red-500/60 ring-2 ring-red-500/20 shadow-red-950/30" 
                 : "bg-slate-900/60 border-slate-800"
             }`}>
-              <div className="border-b border-slate-800 pb-3">
-                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                  <Briefcase className={`h-4 w-4 ${(unreadableType === "motivation" || unreadableType === "jd") ? "text-red-400 animate-pulse" : "text-blue-400"}`} />
-                  Motivationsschreiben Workflow
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Bitte füllen Sie die Schritte von oben nach unten aus.
-                </p>
+              <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                    <Briefcase className={`h-4 w-4 ${(unreadableType === "motivation" || unreadableType === "jd") ? "text-red-400 animate-pulse" : "text-indigo-400"}`} />
+                    Szenario 2: KI-Motivationsschreiben &amp; Abgleich
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Erstelle ein passgenaues Anschreiben für deine Zielstelle.
+                  </p>
+                </div>
               </div>
 
-              {/* SCHRITT 1 */}
+              {/* DOKUMENTE HOCHLADEN */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
-                    (unreadableType === "motivation" || unreadableType === "jd") 
-                      ? "bg-red-600/20 text-red-400 border-red-500/30" 
-                      : "bg-blue-600/20 text-blue-400 border-blue-500/30"
-                  }`}>1</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Dokumente einfügen (PDFs oder Bilder)
-                  </label>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
+                      (motivationExtractedText && jdExtractedText)
+                        ? "bg-indigo-500 text-slate-950 border-indigo-400"
+                        : (unreadableType === "motivation" || unreadableType === "jd") 
+                          ? "bg-red-600/20 text-red-400 border-red-500/30" 
+                          : "bg-indigo-600/20 text-indigo-400 border-indigo-500/30"
+                    }`}>
+                      {(motivationExtractedText && jdExtractedText) ? "✓" : "1"}
+                    </span>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Punkt 1: Dokumente hochladen (Lebenslauf + Stellenausschreibung)
+                    </label>
+                  </div>
+                  {(motivationExtractedText && jdExtractedText) && (
+                    <span className="text-[10px] font-bold text-indigo-400 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800">
+                      Punkt 1 abgeschlossen
+                    </span>
+                  )}
                 </div>
 
                 {(unreadableType === "motivation" || unreadableType === "jd") && unreadableFile ? (
@@ -2768,112 +3243,156 @@ export default function App() {
                 )}
               </div>
 
-              {/* SCHRITT 2 */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-bold border border-blue-500/30">2</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Namen eingeben
-                  </label>
-                </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={manualNames}
-                    onChange={(e) => setManualNames(e.target.value)}
-                    placeholder="Vorname Nachname, z.B. Max Mustermann"
-                    className="w-full text-xs bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                  />
-                  <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
-                    <User className="h-3.5 w-3.5" />
-                  </div>
-                </div>
-              </div>
-
-              {/* SCHRITT 3 */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-bold border border-blue-500/30">3</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Anonymisieren Button
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleManualNameMasking(false)}
-                  disabled={!motivationExtractedText}
-                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-950 disabled:text-slate-600 disabled:border-slate-800 text-slate-200 rounded-lg text-xs font-bold border border-slate-700 transition"
+              {/* SCHRITT 2: ANONYMISIERUNG (FREIGESCHALTET SOBALD EIN TEXT GELADEN IST) */}
+              {(!!motivationExtractedText || !!jdExtractedText) && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-3 pt-2 border-t border-slate-800/80"
                 >
-                  Daten jetzt anonymisieren
-                </button>
-
-                {motivationMaskedText && (
-                  <div className="space-y-1.5 pt-1">
-                    <span className="block text-[11px] font-semibold text-slate-400">Maskierter Lebenslauf Text:</span>
-                    <textarea
-                      value={motivationMaskedText}
-                      onChange={(e) => setMotivationMaskedText(e.target.value)}
-                      className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
-                    />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-500 text-slate-950 text-[10px] font-bold border border-blue-400">
+                        {appliedNames.trim() ? "✓" : "2"}
+                      </span>
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Punkt 2: Namen-Anonymisierung
+                      </label>
+                    </div>
                   </div>
-                )}
 
-                {jdExtractedText && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between">
-                      <span className="block text-[11px] font-semibold text-slate-400">Stellenausschreibung Text:</span>
-                      <button 
-                        onClick={handleManualNameMaskingJd}
-                        className="text-[10px] text-blue-400 hover:text-blue-300 font-bold"
+                  {/* Falls Name bereits bestätigt wurde -> Fenster überspringen & unaufdringlichen Badge anzeigen */}
+                  {appliedNames.trim() ? (
+                    <div className="bg-slate-950/80 border border-blue-500/30 rounded-xl p-3 flex items-center justify-between text-xs shadow-sm">
+                      <div className="flex items-center gap-2 text-blue-300 font-medium">
+                        <ShieldCheck className="h-4 w-4 text-blue-400 shrink-0" />
+                        <span>Name <strong>"{appliedNames}"</strong> wurde anonymisiert.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetNameMasking}
+                        className="text-[10px] text-slate-400 hover:text-white underline shrink-0 ml-2 cursor-pointer"
                       >
-                        Daten jetzt anonymisieren
+                        Name ändern
                       </button>
                     </div>
-                    <textarea
-                      value={jdExtractedText}
-                      onChange={(e) => setJdExtractedText(e.target.value)}
-                      className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
-                    />
-                    {jdMaskedText && (
-                      <div className="space-y-1.5 pt-1">
-                        <span className="block text-[11px] font-semibold text-slate-400">Maskierter Stellenausschreibungs-Text:</span>
-                        <textarea
-                          value={jdMaskedText}
-                          readOnly
-                          className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* SCHRITT 4 */}
-              <div className="pt-4 border-t border-slate-800/80 space-y-3">
-                <div className="bg-slate-950/60 rounded-xl border border-slate-800/50 p-3 space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-slate-300">
-                    <Sparkles className="h-3.5 w-3.5 text-blue-400 animate-pulse" />
-                    <span className="text-[11px] font-bold tracking-tight text-white">Gemma-KI-Engine (Aktiv)</span>
-                  </div>
-                  <p className="text-[10px] text-slate-400 leading-normal">
-                    Ausfallsichere Gemma-Modellkette (Gemma 4-31B &rarr; Gemma 4-26B). Die Verarbeitung erfolgt DSGVO-konform mit automatischem Failover.
-                  </p>
-                </div>
-
-                <button
-                  onClick={sendMatchingToAI}
-                  disabled={isMatchSending || !motivationExtractedText || !jdExtractedText}
-                  className="w-full py-3.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-blue-600/15"
-                  id="btn-match-docs"
-                >
-                  {isMatchSending ? (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Sparkles className="h-3.5 w-3.5" />
+                    <div className="space-y-2.5 bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={manualNames}
+                          onChange={(e) => setManualNames(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleConfirmNameMasking();
+                            }
+                          }}
+                          placeholder="Vorname Nachname, z.B. Max Mustermann"
+                          className="w-full text-xs bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                        />
+                        <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
+                          <User className="h-3.5 w-3.5" />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-slate-500 leading-relaxed">
+                          Trage deinen Namen ein und klicke auf Anonymisieren, um ihn im Dokument zu maskieren.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmNameMasking()}
+                          disabled={!motivationExtractedText && !jdExtractedText}
+                          className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md shrink-0 cursor-pointer"
+                        >
+                          Anonymisieren
+                        </button>
+                      </div>
+                    </div>
                   )}
-                  {isMatchSending ? "Analysiere & Generiere..." : "Abgleich & Anschreiben erstellen"}
-                </button>
-              </div>
+                </motion.div>
+              )}
+
+              {/* SCHRITT 3: VORSCHAU & KI MATCHING */}
+              {(!!motivationExtractedText || !!jdExtractedText) && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-3 pt-3 border-t border-slate-800/80"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-blue-600/20 text-blue-400 text-[10px] font-bold border border-blue-500/30">3</span>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Punkt 3: KI-Anschreiben &amp; Keyword-Gegenüberstellung
+                    </label>
+                  </div>
+
+                  {motivationMaskedText && (
+                    <div className="space-y-1.5 pt-1">
+                      <span className="block text-[11px] font-semibold text-slate-400">Maskierter Lebenslauf Text:</span>
+                      <textarea
+                        value={motivationMaskedText}
+                        onChange={(e) => setMotivationMaskedText(e.target.value)}
+                        className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+                      />
+                    </div>
+                  )}
+
+                  {jdExtractedText && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="block text-[11px] font-semibold text-slate-400">Stellenausschreibung Text:</span>
+                        <button 
+                          onClick={handleManualNameMaskingJd}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 font-bold"
+                        >
+                          Daten jetzt anonymisieren
+                        </button>
+                      </div>
+                      <textarea
+                        value={jdExtractedText}
+                        onChange={(e) => setJdExtractedText(e.target.value)}
+                        className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-500/30"
+                      />
+                      {jdMaskedText && (
+                        <div className="space-y-1.5 pt-1">
+                          <span className="block text-[11px] font-semibold text-slate-400">Maskierter Stellenausschreibungs-Text:</span>
+                          <textarea
+                            value={jdMaskedText}
+                            readOnly
+                            className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500/30"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="bg-slate-950/60 rounded-xl border border-slate-800/50 p-3 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-slate-300">
+                      <Sparkles className="h-3.5 w-3.5 text-indigo-400 animate-pulse" />
+                      <span className="text-[11px] font-bold tracking-tight text-white">Gemma-KI-Engine (Aktiv)</span>
+                    </div>
+                    <p className="text-[10px] text-slate-400 leading-normal">
+                      Ausfallsichere Gemma-Modellkette. Die Verarbeitung erfolgt DSGVO-konform mit automatischem Failover.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={sendMatchingToAI}
+                    disabled={isMatchSending || !motivationExtractedText || !jdExtractedText}
+                    className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/15 cursor-pointer"
+                    id="btn-match-docs"
+                  >
+                    {isMatchSending ? (
+                      <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5" />
+                    )}
+                    {isMatchSending ? "Analysiere & Generiere..." : "Abgleich & Anschreiben erstellen"}
+                  </button>
+                </motion.div>
+              )}
             </div>
           ) : (
             /* Redesign Mode Inputs */
@@ -2882,27 +3401,40 @@ export default function App() {
                 ? "bg-red-950/20 border-red-500/60 ring-2 ring-red-500/20 shadow-red-950/30" 
                 : "bg-slate-900/60 border-slate-800"
             }`}>
-              <div className="border-b border-slate-800 pb-3">
-                <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-                  <Sparkles className={`h-4 w-4 ${unreadableType === "redesign" ? "text-red-400 animate-pulse" : "text-yellow-400"}`} />
-                  Redesign Workflow
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-1">
-                  Gestalte deinen Lebenslauf in ein exklusives Set um.
-                </p>
+              <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
+                    <Sparkles className={`h-4 w-4 ${unreadableType === "redesign" ? "text-red-400 animate-pulse" : "text-yellow-400"}`} />
+                    Szenario 3: HTML-Redesign in Echtzeit
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Wandle deinen Lebenslauf in ein individuelles, druckfertiges HTML/CSS-Design um.
+                  </p>
+                </div>
               </div>
 
-              {/* SCHRITT 1 */}
+              {/* LEBENSLAUF HOCHLADEN ODER EINFÜGEN */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
-                    unreadableType === "redesign" 
-                      ? "bg-red-600/20 text-red-400 border-red-500/30" 
-                      : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
-                  }`}>1</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Lebenslauf einfügen (PDF, Bild oder Text)
-                  </label>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
+                      redesignExtractedText
+                        ? "bg-yellow-500 text-slate-950 border-yellow-400"
+                        : unreadableType === "redesign" 
+                          ? "bg-red-600/20 text-red-400 border-red-500/30" 
+                          : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                    }`}>
+                      {redesignExtractedText ? "✓" : "1"}
+                    </span>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Punkt 1: Lebenslauf einfügen (PDF, Bild oder Text)
+                    </label>
+                  </div>
+                  {redesignExtractedText && (
+                    <span className="text-[10px] font-bold text-yellow-400 bg-yellow-950/60 px-2 py-0.5 rounded border border-yellow-800">
+                      Punkt 1 abgeschlossen
+                    </span>
+                  )}
                 </div>
 
                 {unreadableType === "redesign" && unreadableFile ? (
@@ -2958,7 +3490,7 @@ export default function App() {
                           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         />
                         <span className="text-xs font-semibold text-slate-300 block overflow-hidden text-ellipsis whitespace-nowrap">
-                          {redesignPdfFile ? redesignPdfFile.name : "Lebenslauf PDF oder Bild hochladen"}
+                          {redesignPdfFile ? redesignPdfFile.name : "Lebenslauf PDF/Bild auswählen"}
                         </span>
                       </div>
                       
@@ -2970,7 +3502,7 @@ export default function App() {
                           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                         />
                         <span className="text-xs font-semibold text-slate-300 block overflow-hidden text-ellipsis whitespace-nowrap">
-                          {redesignAvatarFile ? redesignAvatarFile.name : "Portrait Foto hochladen (Optional)"}
+                          {redesignAvatarFile ? redesignAvatarFile.name : "Portrait Foto (Optional)"}
                         </span>
                       </div>
                     </div>
@@ -2996,7 +3528,7 @@ export default function App() {
                         value={redesignExtractedText}
                         onChange={(e) => {
                           setRedesignExtractedText(e.target.value);
-                          performMasking(e.target.value, manualNames, setRedesignMaskedText, false);
+                          performMasking(e.target.value, appliedNames, setRedesignMaskedText, false);
                         }}
                         placeholder="Füge hier deinen Lebenslauf-Text ein oder lade oben eine Datei hoch..."
                         className="w-full h-32 bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-yellow-500/40"
@@ -3007,147 +3539,177 @@ export default function App() {
                 )}
               </div>
 
-              {/* SCHRITT 2 */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-bold border border-yellow-500/30">2</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Namen eingeben (Anonymisierung)
-                  </label>
-                </div>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={manualNames}
-                    onChange={(e) => setManualNames(e.target.value)}
-                    placeholder="Vorname Nachname, z.B. Max Mustermann"
-                    className="w-full text-xs bg-slate-950/80 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-yellow-500/30"
-                  />
-                  <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
-                    <User className="h-3.5 w-3.5" />
-                  </div>
-                </div>
-              </div>
-
-              {/* SCHRITT 3 */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-bold border border-yellow-500/30">3</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Daten jetzt anonymisieren
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!redesignExtractedText) {
-                      setApiError("Bitte füge zuerst Lebenslauf-Inhalt ein.");
-                      return;
-                    }
-                    performMasking(redesignExtractedText, manualNames, setRedesignMaskedText, false);
-                  }}
-                  disabled={!redesignExtractedText}
-                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 disabled:bg-slate-950 disabled:text-slate-600 disabled:border-slate-800 text-slate-200 rounded-lg text-xs font-bold border border-slate-700 transition"
+              {/* SCHRITT 2: ANONYMISIERUNG (FREIGESCHALTET SOBALD TEXT GELADEN IST) */}
+              {!!redesignExtractedText && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-3 pt-2 border-t border-slate-800/80"
                 >
-                  Daten jetzt anonymisieren
-                </button>
-
-                {redesignMaskedText && (
-                  <div className="space-y-1.5 pt-1">
-                    <span className="block text-[11px] font-semibold text-slate-400">Maskierter Lebenslauf Text für KI:</span>
-                    <textarea
-                      value={redesignMaskedText}
-                      onChange={(e) => setRedesignMaskedText(e.target.value)}
-                      className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-yellow-500/30"
-                    />
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500 text-slate-950 text-[10px] font-bold border border-yellow-400">
+                        {appliedNames.trim() ? "✓" : "2"}
+                      </span>
+                      <label className="block text-xs font-semibold text-slate-300">
+                        Punkt 2: Namen-Anonymisierung
+                      </label>
+                    </div>
                   </div>
-                )}
-              </div>
 
-              {/* SCHRITT 4: DESIGN-STIL WÄHLEN */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-bold border border-yellow-500/30">4</span>
-                  <label className="block text-xs font-semibold text-slate-300">
-                    Design-Stil wählen
-                  </label>
-                </div>
-                
-                <div className="grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRedesignStyle("orthogonal");
-                      setRedesignSelectedStyle("orthogonal");
-                      setIsManualSketchOpen(false);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
-                      (redesignStyle === "orthogonal" && !isManualSketchOpen)
-                        ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
-                        : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                    }`}
-                  >
-                    <span className="text-[9px] font-extrabold block leading-tight">STRUKTURIERT</span>
-                    <span className="text-[8px] text-slate-400 leading-snug">
-                      Geradlinig, orthogonal & klar aufgeteilt.
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setRedesignStyle("kurvlinear");
-                      setRedesignSelectedStyle("kurvlinear");
-                      setIsManualSketchOpen(false);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
-                      (redesignStyle === "kurvlinear" && !isManualSketchOpen)
-                        ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
-                        : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                    }`}
-                  >
-                    <span className="text-[9px] font-extrabold block leading-tight">KREATIV / CURVE</span>
-                    <span className="text-[8px] text-slate-400 leading-snug">
-                      Asymmetrisch, kurvig & geschwungen.
-                    </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsManualSketchOpen(true);
-                      setUseSketchInAi(true);
-                    }}
-                    className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
-                      isManualSketchOpen
-                        ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
-                        : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
-                    }`}
-                  >
-                    <span className="text-[9px] font-extrabold block leading-tight">MANUELLE SKIZZE</span>
-                    <span className="text-[8px] text-slate-400 leading-snug">
-                      Zeichnen Sie Ihre eigene Layout-Skizze.
-                    </span>
-                  </button>
-                </div>
-              </div>
-
-              {/* SCHRITT 5 / ÜBERGABE KI */}
-              <div className="pt-4 border-t border-slate-800/80 space-y-3">
-                <button
-                  onClick={sendRedesignToAI}
-                  disabled={isRedesignSending || !redesignExtractedText}
-                  className="w-full py-3.5 bg-yellow-500 hover:bg-yellow-400 disabled:bg-slate-850 disabled:text-slate-600 text-slate-950 font-extrabold rounded-xl text-xs transition shadow-lg shadow-yellow-500/15 flex items-center justify-center gap-2"
-                  id="btn-redesign-docs"
-                >
-                  {isRedesignSending ? (
-                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  {/* Falls Name bereits bestätigt wurde -> Fenster überspringen & unaufdringlichen Badge anzeigen */}
+                  {appliedNames.trim() ? (
+                    <div className="bg-slate-950/80 border border-yellow-500/30 rounded-xl p-3 flex items-center justify-between text-xs shadow-sm">
+                      <div className="flex items-center gap-2 text-yellow-300 font-medium">
+                        <ShieldCheck className="h-4 w-4 text-yellow-400 shrink-0" />
+                        <span>Name <strong>"{appliedNames}"</strong> wurde anonymisiert.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleResetNameMasking}
+                        className="text-[10px] text-slate-400 hover:text-white underline shrink-0 ml-2 cursor-pointer"
+                      >
+                        Name ändern
+                      </button>
+                    </div>
                   ) : (
-                    <Wand2 className="h-3.5 w-3.5" />
+                    <div className="space-y-2.5 bg-slate-950/50 p-3.5 rounded-xl border border-slate-800">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={manualNames}
+                          onChange={(e) => setManualNames(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleConfirmNameMasking();
+                            }
+                          }}
+                          placeholder="Vorname Nachname, z.B. Max Mustermann"
+                          className="w-full text-xs bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-slate-100 focus:outline-none focus:ring-2 focus:ring-yellow-500/30"
+                        />
+                        <div className="absolute right-3 top-2.5 flex items-center text-slate-500">
+                          <User className="h-3.5 w-3.5" />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-slate-500 leading-relaxed">
+                          Trage deinen Namen ein und klicke auf Anonymisieren, um ihn im Dokument zu maskieren.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmNameMasking()}
+                          disabled={!redesignExtractedText}
+                          className="px-4 py-1.5 bg-yellow-500 hover:bg-yellow-400 disabled:bg-slate-800 text-slate-950 rounded-lg text-xs font-bold transition shadow-md shrink-0 cursor-pointer"
+                        >
+                          Anonymisieren
+                        </button>
+                      </div>
+                    </div>
                   )}
-                  {isRedesignSending ? "Berechne harmonisches Design..." : "Harmonisches Design generieren"}
-                </button>
-              </div>
+                </motion.div>
+              )}
+
+              {/* SCHRITT 3: DESIGN-STIL & KI-GENERIERUNG (FREIGESCHALTET SOBALD TEXT GELADEN IST) */}
+              {!!redesignExtractedText && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="space-y-4 pt-3 border-t border-slate-800/80"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px] font-bold border border-yellow-500/30">3</span>
+                    <label className="block text-xs font-semibold text-slate-300">
+                      Punkt 3: Design-Stil wählen &amp; HTML-Redesign generieren
+                    </label>
+                  </div>
+
+                  {redesignMaskedText && (
+                    <div className="space-y-1.5">
+                      <span className="block text-[11px] font-semibold text-slate-400">Maskierter Lebenslauf Text für KI:</span>
+                      <textarea
+                        value={redesignMaskedText}
+                        onChange={(e) => setRedesignMaskedText(e.target.value)}
+                        className="w-full h-24 bg-slate-950 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-yellow-500/30"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRedesignStyle("orthogonal");
+                        setRedesignSelectedStyle("orthogonal");
+                        setIsManualSketchOpen(false);
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
+                        (redesignStyle === "orthogonal" && !isManualSketchOpen)
+                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
+                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                      }`}
+                    >
+                      <span className="text-[9px] font-extrabold block leading-tight">STRUKTURIERT</span>
+                      <span className="text-[8px] text-slate-400 leading-snug">
+                        Geradlinig, orthogonal &amp; klar aufgeteilt.
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRedesignStyle("kurvlinear");
+                        setRedesignSelectedStyle("kurvlinear");
+                        setIsManualSketchOpen(false);
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
+                        (redesignStyle === "kurvlinear" && !isManualSketchOpen)
+                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
+                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                      }`}
+                    >
+                      <span className="text-[9px] font-extrabold block leading-tight">KREATIV / CURVE</span>
+                      <span className="text-[8px] text-slate-400 leading-snug">
+                        Asymmetrisch, kurvig &amp; geschwungen.
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsManualSketchOpen(true);
+                        setUseSketchInAi(true);
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition flex flex-col justify-between h-24 ${
+                        isManualSketchOpen
+                          ? "bg-yellow-500/10 border-yellow-500 text-yellow-400 shadow-md shadow-yellow-500/5"
+                          : "bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700"
+                      }`}
+                    >
+                      <span className="text-[9px] font-extrabold block leading-tight">MANUELLE SKIZZE</span>
+                      <span className="text-[8px] text-slate-400 leading-snug">
+                        Zeichnen Sie Ihre eigene Layout-Skizze.
+                      </span>
+                    </button>
+                  </div>
+
+                  <div className="pt-2 space-y-3">
+                    <button
+                      onClick={sendRedesignToAI}
+                      disabled={isRedesignSending || !redesignExtractedText}
+                      className="w-full py-3.5 bg-yellow-500 hover:bg-yellow-400 disabled:bg-slate-850 disabled:text-slate-600 text-slate-950 font-extrabold rounded-xl text-xs transition shadow-lg shadow-yellow-500/15 flex items-center justify-center gap-2 cursor-pointer"
+                      id="btn-redesign-docs"
+                    >
+                      {isRedesignSending ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Wand2 className="h-3.5 w-3.5" />
+                      )}
+                      {isRedesignSending ? "Berechne harmonisches Design..." : "Harmonisches Design generieren"}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
             </div>
           )}
 
@@ -3773,41 +4335,223 @@ export default function App() {
                   <InteractiveLoader mode="redesign" />
                 ) : (
                   <div className="space-y-6">
-                    {/* Document Switcher & Controls (Always Visible) */}
-                    <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-                      <div className="flex flex-wrap gap-2">
-                        {/* Doc switch */}
-                        <div className="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800/85">
-                          <button
-                            type="button"
-                            onClick={() => setRedesignSelectedDoc("resume")}
-                            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
-                              redesignSelectedDoc === "resume"
-                                ? "bg-yellow-500 text-slate-950 shadow-sm"
-                                : "text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            <FileText className="h-3.5 w-3.5" />
-                            Lebenslauf (CV)
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRedesignSelectedDoc("cover_letter")}
-                            className={`px-3 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
-                              redesignSelectedDoc === "cover_letter"
-                                ? "bg-yellow-500 text-slate-950 shadow-sm"
-                                : "text-slate-400 hover:text-slate-200"
-                            }`}
-                          >
-                            <Briefcase className="h-3.5 w-3.5" />
-                            Motivationsschreiben
-                          </button>
+                    {/* 1. TOP: Manual Style Skizze (DIN A4 Referenz) */}
+                    {isManualSketchOpen && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-950/40 rounded-2xl border border-slate-800 p-4 animate-in fade-in duration-300">
+                        {/* Left Column: Sketchboard DIN A4 Canvas */}
+                        <div className="space-y-2 flex flex-col">
+                          <span className="text-[10px] text-slate-500 font-sans uppercase tracking-wider block">Style-Skizze (A4 Referenz-Layout):</span>
+                          <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-3 shadow-inner flex flex-col items-center justify-center">
+                            {/* Dot-Grid background container for DIN A4 ratio */}
+                            <div 
+                              className="relative border border-slate-850 rounded-lg bg-white overflow-hidden w-full max-w-[400px]" 
+                              style={{ 
+                                aspectRatio: "1 / 1.414", 
+                                backgroundImage: "radial-gradient(#cbd5e1 1.5px, transparent 1.5px)", 
+                                backgroundSize: "14px 14px" 
+                              }}
+                            >
+                              <canvas
+                                ref={sketchCanvasRef}
+                                width={600}
+                                height={848}
+                                onMouseDown={startDrawingSketch}
+                                onMouseMove={drawSketch}
+                                onMouseUp={stopDrawingSketch}
+                                onMouseLeave={stopDrawingSketch}
+                                onTouchStart={startDrawingSketch}
+                                onTouchMove={drawSketch}
+                                onTouchEnd={stopDrawingSketch}
+                                className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
+                              />
+                            </div>
+                          </div>
                         </div>
+
+                        {/* Right Column: Sketchboard Controls & Color legend */}
+                        <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-4 flex flex-col justify-between">
+                          <div className="space-y-4">
+                            <div>
+                              <span className="text-xs text-yellow-400 font-bold uppercase tracking-wider block">Skizzen Werkzeuge & Optionen</span>
+                              <span className="text-[10px] text-slate-400 mt-0.5 block">Farben, Stifte und KI-Anweisungen</span>
+                            </div>
+                            
+                            <div className="flex flex-col gap-3">
+                              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block border-b border-slate-800 pb-1">KI Farbbedeutung / Legende:</span>
+                              <div className="grid grid-cols-2 gap-1.5 text-[9px] font-bold">
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("#2563EB")}
+                                  className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#2563EB" ? "bg-blue-600/20 border-blue-500 text-blue-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-blue-600 block shrink-0" />
+                                  Blau: Kontaktdaten
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("#FACC15")}
+                                  className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#FACC15" ? "bg-yellow-500/25 border-yellow-500 text-yellow-350" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-yellow-400 block shrink-0" />
+                                  Gelb: Fähigkeiten
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("#EF4444")}
+                                  className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#EF4444" ? "bg-red-500/20 border-red-500 text-red-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-red-500 block shrink-0" />
+                                  Rot: Erfahrung
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("#000000")}
+                                  className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#000000" ? "bg-slate-800 border-slate-650 text-white" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-black border border-slate-600 block shrink-0" />
+                                  Schwarz: Foto/Bild
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("#22C55E")}
+                                  className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#22C55E" ? "bg-green-500/20 border-green-500 text-green-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-green-500 block shrink-0" />
+                                  Grün: Ausbildung
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("#A855F7")}
+                                  className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#A855F7" ? "bg-purple-500/20 border-purple-500 text-purple-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  <span className="w-3 h-3 rounded-full bg-purple-500 block shrink-0" />
+                                  Lila: Style-Aufteilung
+                                </button>
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="flex justify-between items-center gap-2 pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSketchColor("eraser")}
+                                  className={`px-2.5 py-1 text-[9px] font-extrabold rounded-lg border transition ${sketchColor === "eraser" ? "bg-purple-600/30 border-purple-500 text-purple-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                >
+                                  🧹 Radierer
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={clearSketchCanvas}
+                                  className="px-2.5 py-1 text-[9px] bg-slate-900 hover:bg-slate-850 text-slate-300 font-extrabold rounded-lg border border-slate-800 transition"
+                                >
+                                  Leeren
+                                </button>
+                              </div>
+
+                              {/* Brush size choice */}
+                              <div className="flex items-center justify-between text-[9px] font-medium pt-1">
+                                <span className="text-slate-400">Pinselstärke:</span>
+                                <div className="flex gap-1.5">
+                                  {[6, 12, 24].map((size) => (
+                                    <button
+                                      key={size}
+                                      type="button"
+                                      onClick={() => setSketchBrushSize(size)}
+                                      className={`px-2 py-0.5 rounded text-[8px] font-bold ${sketchBrushSize === size ? "bg-yellow-500 text-slate-950 font-extrabold" : "bg-slate-900 text-slate-400 hover:text-slate-200"}`}
+                                    >
+                                      {size === 6 ? "Dünn" : size === 12 ? "Mittel" : "Dick"}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* AI Layout use checkbox */}
+                              <label className="flex items-center gap-2 cursor-pointer pt-2 border-t border-slate-850/60 select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={useSketchInAi}
+                                  onChange={(e) => setUseSketchInAi(e.target.checked)}
+                                  className="rounded border-slate-800 bg-slate-950 text-yellow-500 focus:ring-0 h-3.5 w-3.5"
+                                />
+                                <span className="text-[10px] text-slate-300 font-bold">
+                                  Layoutvorlage für KI aktivieren
+                                </span>
+                              </label>
+
+                              {/* Advanced Options for Sketch */}
+                              {useSketchInAi && (
+                                <div className="space-y-3 pt-2 border-t border-slate-850/60">
+                                  {/* Sketch Mode Toggle */}
+                                  <div className="flex flex-col gap-1.5">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Zeichenmodus / KI-Interpretation:</span>
+                                    <div className="flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchMode("grid")}
+                                        className={`flex-1 py-1 px-2 rounded-lg text-[9px] font-bold border transition ${sketchMode === "grid" ? "bg-emerald-600/20 border-emerald-500 text-emerald-400" : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"}`}
+                                      >
+                                        Raster / Linear
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchMode("freehand")}
+                                        className={`flex-1 py-1 px-2 rounded-lg text-[9px] font-bold border transition ${sketchMode === "freehand" ? "bg-amber-600/20 border-amber-500 text-amber-400" : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"}`}
+                                      >
+                                        Freihand (1:1 Skizze folgen)
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Advanced Custom Prompt Input */}
+                                  <div className="flex flex-col gap-1.5">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block flex items-center gap-1"><Settings className="h-3 w-3" /> Advanced: Eigene Anweisung (Style)</span>
+                                    <textarea
+                                      value={sketchPrompt}
+                                      onChange={(e) => setSketchPrompt(e.target.value)}
+                                      placeholder="Bsp.: Die Style Aufteilung sind Äste von Pflanzen mit Blättern am Ende..."
+                                      className="w-full h-16 rounded-lg bg-slate-900 border border-slate-800 text-[10px] text-slate-300 placeholder:text-slate-600 p-2 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 transition-colors resize-none"
+                                    />
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 2. MIDDLE: Toggle (Lebenslauf / Motivationsschreiben) & Action-Buttons (UNTER DER SKIZZE & ÜBER DER DOKUMENTENVORSCHAU) */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-y border-slate-800/80 py-3">
+                      {/* Doc Switcher Toggle */}
+                      <div className="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800/85 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => setRedesignSelectedDoc("resume")}
+                          className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                            redesignSelectedDoc === "resume"
+                              ? "bg-yellow-500 text-slate-950 shadow-sm"
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                          Lebenslauf (CV)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRedesignSelectedDoc("cover_letter")}
+                          className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                            redesignSelectedDoc === "cover_letter"
+                              ? "bg-yellow-500 text-slate-950 shadow-sm"
+                              : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          <Briefcase className="h-3.5 w-3.5" />
+                          Motivationsschreiben
+                        </button>
                       </div>
 
                       {/* Controls Row */}
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* Manual Style Skizze Button */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {/* Manual Style Skizze Button Toggle */}
                         <button
                           type="button"
                           onClick={() => setIsManualSketchOpen(!isManualSketchOpen)}
@@ -3818,8 +4562,8 @@ export default function App() {
                           }`}
                           title="Manuelle A4-Design-Skizze für die KI zeichnen"
                         >
-                          <Edit3 className="h-3.5 w-3.5 text-blue-400 animate-pulse" />
-                          Manual Style-Skizze
+                          <Edit3 className="h-3.5 w-3.5 text-blue-400" />
+                          {isManualSketchOpen ? "Skizze geöffnet" : "Manual Style-Skizze"}
                         </button>
 
                         {/* Inline Edit Toggle */}
@@ -3830,7 +4574,7 @@ export default function App() {
                             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition ${
                               isEditingEnabled
                                 ? "bg-yellow-500/20 border-yellow-500 text-yellow-400"
-                                : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
+                                : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"
                             }`}
                             title="Texte direkt im Dokument anklicken und editieren"
                           >
@@ -3854,7 +4598,7 @@ export default function App() {
 
                         {/* Download & Print Buttons */}
                         {redesignResult && (
-                          <>
+                          <div className="flex gap-2">
                             <button
                               type="button"
                               onClick={downloadRedesignHtml}
@@ -3873,210 +4617,224 @@ export default function App() {
                               <Printer className="h-3.5 w-3.5" />
                               Drucken
                             </button>
-                          </>
+                          </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Live Document Preview Container in Bento Grid */}
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                      {/* Left: Document Preview & Sketchpad area */}
-                      <div className={`${redesignResult ? "xl:col-span-2" : "xl:col-span-3"} space-y-2`}>
-                        <div className={`grid grid-cols-1 ${isManualSketchOpen ? "md:grid-cols-2" : ""} gap-6`}>
-                          
-                          {/* Manual Sketch DIN A4 */}
-                          {isManualSketchOpen && (
-                            <div className="space-y-2 flex flex-col">
-                              <span className="text-[10px] text-slate-500 font-sans uppercase tracking-wider block">Style-Skizze (A4 Verhältnis):</span>
-                              <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-3 shadow-inner flex flex-col items-center space-y-3">
-                                {/* Dot-Grid background container for DIN A4 ratio */}
-                                <div 
-                                  className="relative border border-slate-850 rounded-lg bg-white overflow-hidden w-full" 
-                                  style={{ 
-                                    aspectRatio: "1 / 1.414", 
-                                    backgroundImage: "radial-gradient(#cbd5e1 1.5px, transparent 1.5px)", 
-                                    backgroundSize: "14px 14px" 
-                                  }}
-                                >
-                                  <canvas
-                                    ref={sketchCanvasRef}
-                                    onMouseDown={startDrawingSketch}
-                                    onMouseMove={drawSketch}
-                                    onMouseUp={stopDrawingSketch}
-                                    onMouseLeave={stopDrawingSketch}
-                                    onTouchStart={startDrawingSketch}
-                                    onTouchMove={drawSketch}
-                                    onTouchEnd={stopDrawingSketch}
-                                    className="absolute inset-0 w-full h-full cursor-crosshair touch-none"
-                                  />
-                                </div>
-
-                                {/* Legend & Brush Choice */}
-                                <div className="w-full space-y-2.5">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide block">KI Farb-Bedeutung:</span>
-                                  <div className="flex flex-col gap-1.5 text-[9px] font-medium">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("#2563EB")}
-                                      className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#2563EB" ? "bg-blue-600/20 border-blue-500 text-blue-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      <span className="w-3 h-3 rounded-full bg-blue-600 block shrink-0" />
-                                      Blau: Kontaktdaten
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("#FACC15")}
-                                      className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#FACC15" ? "bg-yellow-500/25 border-yellow-500 text-yellow-350" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      <span className="w-3 h-3 rounded-full bg-yellow-500 block shrink-0" />
-                                      Gelb: Fähigkeiten
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("#EF4444")}
-                                      className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#EF4444" ? "bg-red-650/20 border-red-500 text-red-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      <span className="w-3 h-3 rounded-full bg-red-500 block shrink-0" />
-                                      Rot: Arbeitgeber
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("#000000")}
-                                      className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#000000" ? "bg-slate-800 border-slate-650 text-white" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      <span className="w-3 h-3 rounded-full bg-black border border-slate-600 block shrink-0" />
-                                      Schwarz: Foto/Bild
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("#22C55E")}
-                                      className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#22C55E" ? "bg-green-500/20 border-green-500 text-green-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      <span className="w-3 h-3 rounded-full bg-green-500 block shrink-0" />
-                                      Grün: Ausbildung
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("#A855F7")}
-                                      className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#A855F7" ? "bg-purple-500/20 border-purple-500 text-purple-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      <span className="w-3 h-3 rounded-full bg-purple-500 block shrink-0" />
-                                      Lila: Style-Aufteilung
-                                    </button>
-                                  </div>
-
-                                  {/* Action Buttons */}
-                                  <div className="flex justify-between items-center gap-2 pt-1">
-                                    <button
-                                      type="button"
-                                      onClick={() => setSketchColor("eraser")}
-                                      className={`px-2.5 py-1 text-[9px] font-extrabold rounded-lg border transition ${sketchColor === "eraser" ? "bg-purple-600/30 border-purple-500 text-purple-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
-                                    >
-                                      🧹 Radierer
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={clearSketchCanvas}
-                                      className="px-2.5 py-1 text-[9px] bg-slate-900 hover:bg-slate-850 text-slate-300 font-extrabold rounded-lg border border-slate-800 transition"
-                                    >
-                                      Leeren
-                                    </button>
-                                  </div>
-
-                                  {/* Brush size choice */}
-                                  <div className="flex items-center justify-between text-[9px] font-medium pt-1">
-                                    <span className="text-slate-400">Pinselstärke:</span>
-                                    <div className="flex gap-1.5">
-                                      {[6, 12, 24].map((size) => (
-                                        <button
-                                          key={size}
-                                          type="button"
-                                          onClick={() => setSketchBrushSize(size)}
-                                          className={`px-2 py-0.5 rounded text-[8px] font-bold ${sketchBrushSize === size ? "bg-yellow-500 text-slate-950 font-extrabold" : "bg-slate-900 text-slate-400 hover:text-slate-200"}`}
-                                        >
-                                          {size === 6 ? "Dünn" : size === 12 ? "Mittel" : "Dick"}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-
-                                  {/* AI Layout use checkbox */}
-                                  <label className="flex items-center gap-2 cursor-pointer pt-2 border-t border-slate-850/60 select-none">
-                                    <input
-                                      type="checkbox"
-                                      checked={useSketchInAi}
-                                      onChange={(e) => setUseSketchInAi(e.target.checked)}
-                                      className="rounded border-slate-800 bg-slate-950 text-yellow-500 focus:ring-0 h-3.5 w-3.5"
-                                    />
-                                    <span className="text-[10px] text-slate-300 font-bold">
-                                      Layoutvorlage für KI aktivieren
-                                    </span>
-                                  </label>
-                                </div>
-                              </div>
+                    {/* 3. BOTTOM GRID: Dokumentenvorschau (Left) & Farbenrad / WCAG Panel (Right, nur auf Höhe der Dokumentenvorschau) */}
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+                      {/* Left Column: Live Document Preview */}
+                      <div className={`${redesignResult ? "xl:col-span-2" : "xl:col-span-3"} space-y-2 flex flex-col`}>
+                        <span className="text-[10px] text-slate-500 font-sans uppercase tracking-wider block">Dokumenten-Vorschau (A4 Vollansicht):</span>
+                        
+                        {!redesignResult ? (
+                          <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-8 flex flex-col items-center justify-center text-center shadow-inner min-h-[500px]">
+                            <div className="bg-slate-800/80 p-4 rounded-full border border-slate-700 mb-4">
+                              <Sparkles className="h-8 w-8 text-yellow-500 animate-pulse" />
                             </div>
-                          )}
-
-                          {/* Live Preview Document */}
-                          <div className="space-y-2 flex flex-col flex-1">
-                            <span className="text-[10px] text-slate-500 font-sans uppercase tracking-wider block">Dokumenten-Vorschau (A4 Verhältnis):</span>
-                            
-                            {!redesignResult ? (
-                              <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-8 flex flex-col items-center justify-center text-center shadow-inner h-[381px] xl:h-[500px] flex-1">
-                                <div className="bg-slate-800/80 p-4 rounded-full border border-slate-700 mb-4">
-                                  <Sparkles className="h-8 w-8 text-yellow-500 animate-pulse" />
-                                </div>
-                                <span className="text-sm font-bold text-slate-300 block">Bereit für Ihr Redesign</span>
-                                <span className="text-xs text-slate-500 max-w-xs block mt-1.5 leading-relaxed">
-                                  {isManualSketchOpen ? "Zeichnen Sie Ihre gewünschte Layout-Skizze auf das linke DIN A4 Blatt und klicken Sie links auf 'Harmonisches Design generieren'." : "Laden Sie links Ihren Lebenslauf hoch, wählen Sie Ihre Farbpalette und klicken Sie auf 'Harmonisches Design generieren'."}
-                                </span>
-                              </div>
-                            ) : (
-                              <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-2 overflow-hidden shadow-inner relative flex-1">
-                                {isEditingEnabled && (
-                                  <div className="absolute top-4 right-4 bg-yellow-500/90 text-slate-950 text-[10px] font-extrabold px-3 py-1 rounded-full shadow-md pointer-events-none z-10 animate-pulse">
-                                    ✍️ Bearbeitungsmodus aktiv (Direkt in den Text klicken & losschreiben)
-                                  </div>
-                                )}
-                                <iframe
-                                  title="Redesign Live Preview"
-                                  ref={redesignIframeRef}
-                                  srcDoc={`
-                                    <!DOCTYPE html>
-                                    <html>
-                                      <head>
-                                        <meta charset="utf-8">
-                                        <style>
-                                          body { margin: 0; padding: 0; }
-                                          ${redesignSelectedDoc === "resume" ? redesignResult?.[redesignSelectedStyle]?.resume?.css : redesignResult?.[redesignSelectedStyle]?.cover_letter?.css}
-                                          /* Custom editable element styling so they don't stand out when printed */
-                                          [contenteditable="true"] {
-                                            outline: none !important;
-                                          }
-                                          [contenteditable="true"]:focus {
-                                            outline: 1px dashed rgba(250, 204, 21, 0.5) !important;
-                                            outline-offset: 2px;
-                                          }
-                                        </style>
-                                      </head>
-                                      <body ${isEditingEnabled ? 'contenteditable="true"' : ''}>
-                                        ${redesignSelectedDoc === "resume" ? redesignResult?.[redesignSelectedStyle]?.resume?.html : redesignResult?.[redesignSelectedStyle]?.cover_letter?.html}
-                                      </body>
-                                    </html>
-                                  `}
-                                  onLoad={handleIframeLoad}
-                                  className="w-full h-[650px] bg-white rounded-lg border border-slate-900"
-                                  sandbox="allow-scripts allow-same-origin"
-                                />
+                            <span className="text-sm font-bold text-slate-300 block">Bereit für Ihr Redesign</span>
+                            <span className="text-xs text-slate-500 max-w-xs block mt-1.5 leading-relaxed">
+                              {isManualSketchOpen ? "Zeichnen Sie Ihre gewünschte Layout-Skizze oben auf das DIN A4 Blatt und klicken Sie links auf 'Harmonisches Design generieren'." : "Laden Sie links Ihren Lebenslauf hoch, wählen Sie Ihre Farbpalette und klicken Sie auf 'Harmonisches Design generieren'."}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-2 overflow-hidden shadow-inner relative">
+                            {isEditingEnabled && (
+                              <div className="absolute top-4 right-4 bg-yellow-500/90 text-slate-950 text-[10px] font-extrabold px-3 py-1 rounded-full shadow-md pointer-events-none z-10 animate-pulse">
+                                ✍️ Bearbeitungsmodus aktiv (Direkt in den Text klicken & losschreiben)
                               </div>
                             )}
+                            <iframe
+                              title="Redesign Live Preview"
+                              ref={redesignIframeRef}
+                              srcDoc={`
+                                <!DOCTYPE html>
+                                <html>
+                                  <head>
+                                    <meta charset="utf-8">
+                                    <style>
+                                      html, body { 
+                                        margin: 0; 
+                                        padding: 0; 
+                                        overflow: hidden !important; 
+                                        width: 100%;
+                                        box-sizing: border-box;
+                                      }
+                                      ${redesignSelectedDoc === "resume" ? redesignResult?.[redesignSelectedStyle]?.resume?.css : redesignResult?.[redesignSelectedStyle]?.cover_letter?.css}
+                                      /* Custom editable element styling so they don't stand out when printed */
+                                      [contenteditable="true"] {
+                                        outline: none !important;
+                                      }
+                                      [contenteditable="true"]:focus {
+                                        outline: 1px dashed rgba(250, 204, 21, 0.5) !important;
+                                        outline-offset: 2px;
+                                      }
+                                    </style>
+                                  </head>
+                                  <body ${isEditingEnabled ? 'contenteditable="true"' : ''}>
+                                    ${redesignSelectedDoc === "resume" ? redesignResult?.[redesignSelectedStyle]?.resume?.html : redesignResult?.[redesignSelectedStyle]?.cover_letter?.html}
+                                  </body>
+                                </html>
+                              `}
+                              onLoad={handleIframeLoad}
+                              scrolling="no"
+                              className="w-full h-[920px] bg-white rounded-lg border border-slate-900 overflow-hidden"
+                              sandbox="allow-scripts allow-same-origin"
+                            />
                           </div>
-                        </div>
+                        )}
                       </div>
 
-                      {/* Right: WCAG Automated Contrast Checker Sidebar */}
+                      {/* Right Column: Interaktive Farbanpassung & WCAG 2.1 Kontrast-Prüfung Sidebar (Schmal, nur auf Höhe der Dokumentenvorschau) */}
                       {redesignResult && (
                         <div className="xl:col-span-1 space-y-4 flex flex-col justify-start">
+                          {false ? (
+                             <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-4 space-y-4">
+                                <div className="flex items-center justify-between border-b border-slate-900 pb-2">
+                                  <div>
+                                    <span className="text-xs text-yellow-400 font-bold uppercase tracking-wider block">Skizzen Werkzeuge & Optionen</span>
+                                    <span className="text-[10px] text-slate-400 mt-0.5 block">Farben, Stifte und KI-Anweisungen</span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col space-y-4">
+                                  <div className="w-full max-w-[420px] flex flex-col gap-2 mt-2 bg-slate-950 border border-slate-900 p-3 rounded-xl">
+                                    <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block border-b border-slate-800 pb-1">KI Farbbedeutung / Legende:</span>
+                                    <div className="grid grid-cols-2 gap-1.5 text-[9px] font-bold">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("#2563EB")}
+                                        className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#2563EB" ? "bg-blue-600/20 border-blue-500 text-blue-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        <span className="w-3 h-3 rounded-full bg-blue-600 block shrink-0" />
+                                        Blau: Kontaktdaten
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("#FACC15")}
+                                        className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#FACC15" ? "bg-yellow-500/25 border-yellow-500 text-yellow-350" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        <span className="w-3 h-3 rounded-full bg-yellow-400 block shrink-0" />
+                                        Gelb: Fähigkeiten
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("#EF4444")}
+                                        className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#EF4444" ? "bg-red-500/20 border-red-500 text-red-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        <span className="w-3 h-3 rounded-full bg-red-500 block shrink-0" />
+                                        Rot: Erfahrung
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("#000000")}
+                                        className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#000000" ? "bg-slate-800 border-slate-650 text-white" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        <span className="w-3 h-3 rounded-full bg-black border border-slate-600 block shrink-0" />
+                                        Schwarz: Foto/Bild
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("#22C55E")}
+                                        className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#22C55E" ? "bg-green-500/20 border-green-500 text-green-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        <span className="w-3 h-3 rounded-full bg-green-500 block shrink-0" />
+                                        Grün: Ausbildung
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("#A855F7")}
+                                        className={`p-2 rounded-lg border text-left flex items-center gap-2 transition ${sketchColor === "#A855F7" ? "bg-purple-500/20 border-purple-500 text-purple-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        <span className="w-3 h-3 rounded-full bg-purple-500 block shrink-0" />
+                                        Lila: Style-Aufteilung
+                                      </button>
+                                    </div>
+                                    {/* Action Buttons */}
+                                    <div className="flex justify-between items-center gap-2 pt-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => setSketchColor("eraser")}
+                                        className={`px-2.5 py-1 text-[9px] font-extrabold rounded-lg border transition ${sketchColor === "eraser" ? "bg-purple-600/30 border-purple-500 text-purple-300" : "bg-slate-900 border-slate-850 text-slate-400"}`}
+                                      >
+                                        🧹 Radierer
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={clearSketchCanvas}
+                                        className="px-2.5 py-1 text-[9px] bg-slate-900 hover:bg-slate-850 text-slate-300 font-extrabold rounded-lg border border-slate-800 transition"
+                                      >
+                                        Leeren
+                                      </button>
+                                    </div>
+                                    {/* Brush size choice */}
+                                    <div className="flex items-center justify-between text-[9px] font-medium pt-1">
+                                      <span className="text-slate-400">Pinselstärke:</span>
+                                      <div className="flex gap-1.5">
+                                        {[6, 12, 24].map((size) => (
+                                          <button
+                                            key={size}
+                                            type="button"
+                                            onClick={() => setSketchBrushSize(size)}
+                                            className={`px-2 py-0.5 rounded text-[8px] font-bold ${sketchBrushSize === size ? "bg-yellow-500 text-slate-950 font-extrabold" : "bg-slate-900 text-slate-400 hover:text-slate-200"}`}
+                                          >
+                                            {size === 6 ? "Dünn" : size === 12 ? "Mittel" : "Dick"}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    {/* AI Layout use checkbox */}
+                                    <label className="flex items-center gap-2 cursor-pointer pt-2 border-t border-slate-850/60 select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={useSketchInAi}
+                                        onChange={(e) => setUseSketchInAi(e.target.checked)}
+                                        className="rounded border-slate-800 bg-slate-950 text-yellow-500 focus:ring-0 h-3.5 w-3.5"
+                                      />
+                                      <span className="text-[10px] text-slate-300 font-bold">
+                                        Layoutvorlage für KI aktivieren
+                                      </span>
+                                    </label>
+                                    {/* Advanced Options for Sketch */}
+                                    {useSketchInAi && (
+                                      <div className="space-y-3 pt-2 border-t border-slate-850/60">
+                                        {/* Sketch Mode Toggle */}
+                                        <div className="flex flex-col gap-1.5">
+                                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block">Zeichenmodus / KI-Interpretation:</span>
+                                          <div className="flex gap-2">
+                                            <button
+                                              type="button"
+                                              onClick={() => setSketchMode("grid")}
+                                              className={`flex-1 py-1 px-2 rounded-lg text-[9px] font-bold border transition ${sketchMode === "grid" ? "bg-emerald-600/20 border-emerald-500 text-emerald-400" : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"}`}
+                                            >
+                                              Raster / Linear
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setSketchMode("freehand")}
+                                              className={`flex-1 py-1 px-2 rounded-lg text-[9px] font-bold border transition ${sketchMode === "freehand" ? "bg-amber-600/20 border-amber-500 text-amber-400" : "bg-slate-900 border-slate-850 text-slate-400 hover:text-slate-200"}`}
+                                            >
+                                              Freihand (1:1 Skizze folgen)
+                                            </button>
+                                          </div>
+                                        </div>
+                                        {/* Advanced Custom Prompt Input */}
+                                        <div className="flex flex-col gap-1.5">
+                                          <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide block flex items-center gap-1"><Settings className="h-3 w-3" /> Advanced: Eigene Anweisung (Style)</span>
+                                          <textarea
+                                            value={sketchPrompt}
+                                            onChange={(e) => setSketchPrompt(e.target.value)}
+                                            placeholder="Bsp.: Die Style Aufteilung sind Äste von Pflanzen mit Blättern am Ende..."
+                                            className="w-full h-16 rounded-lg bg-slate-900 border border-slate-800 text-[10px] text-slate-300 placeholder:text-slate-600 p-2 focus:border-yellow-500 focus:ring-1 focus:ring-yellow-500 transition-colors resize-none"
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                             </div>
+                          ) : (
+                             <>
                           {/* Interaktive Farbanpassung & Designkontrollen */}
                           <div className="bg-slate-950/80 rounded-xl border border-slate-800 p-4 space-y-4">
                             <div className="flex items-center justify-between border-b border-slate-900 pb-2">
@@ -4086,12 +4844,15 @@ export default function App() {
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="flex flex-col space-y-6">
                               {/* LEFT: COLOR WHEEL */}
                               <div className="space-y-3">
                                 <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wider block">A. Farbenrad & Farbharmonie</span>
                                 
                                 <div className="bg-slate-950 border border-slate-900 rounded-xl p-3 flex flex-col items-center space-y-3 shadow-inner relative overflow-hidden">
+                                  {true ? (
+                                    <>
+
                                   <div 
                                     className="relative w-36 h-36 select-none touch-none cursor-crosshair opacity-100"
                                     onPointerDown={handlePointerDown}
@@ -4162,34 +4923,47 @@ export default function App() {
                                     </svg>
                                   </div>
 
+                                                                      </>
+                                  ) : (
+                                    <div className="w-full space-y-2">
+                                      <span className="text-[9px] text-slate-500 font-bold block text-center">Basisfarbe (Hue) auswählen: {redesignBaseHue}°</span>
+                                      <input type="range" min="0" max="360" value={redesignBaseHue} onChange={(e) => setRedesignBaseHue(Number(e.target.value))} className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer" style={{ background: "linear-gradient(to right, #ff0000 0%, #ffff00 17%, #00ff00 33%, #00ffff 50%, #0000ff 67%, #ff00ff 83%, #ff0000 100%)" }} />
+                                    </div>
+                                  )}
+
                                   <div className="w-full grid grid-cols-5 gap-1 pt-1.5 border-t border-slate-900">
                                     <div className="flex flex-col items-center">
-                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.primary_light }}>
-                                        <span className="mix-blend-difference font-bold">{activeColors.primary_light}</span>
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white relative overflow-hidden" style={{ backgroundColor: activeColors.primary_light }}>
+                                        <span className="mix-blend-difference font-bold pointer-events-none">{activeColors.primary_light}</span>
+                                        <input type="color" value={activeColors.primary_light} onChange={(e) => setCustomColors(prev => ({ ...prev, primary_light: e.target.value }))} className="absolute inset-[-10px] opacity-0 cursor-pointer w-[200%] h-[200%]" />
                                       </div>
                                       <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Primär<br/>Hell</span>
                                     </div>
                                     <div className="flex flex-col items-center">
-                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.primary_dark }}>
-                                        <span className="mix-blend-difference font-bold">{activeColors.primary_dark}</span>
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white relative overflow-hidden" style={{ backgroundColor: activeColors.primary_dark }}>
+                                        <span className="mix-blend-difference font-bold pointer-events-none">{activeColors.primary_dark}</span>
+                                        <input type="color" value={activeColors.primary_dark} onChange={(e) => setCustomColors(prev => ({ ...prev, primary_dark: e.target.value }))} className="absolute inset-[-10px] opacity-0 cursor-pointer w-[200%] h-[200%]" />
                                       </div>
                                       <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Primär<br/>Dunkel</span>
                                     </div>
                                     <div className="flex flex-col items-center">
-                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.secondary_light }}>
-                                        <span className="mix-blend-difference font-bold">{activeColors.secondary_light}</span>
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white relative overflow-hidden" style={{ backgroundColor: activeColors.secondary_light }}>
+                                        <span className="mix-blend-difference font-bold pointer-events-none">{activeColors.secondary_light}</span>
+                                        <input type="color" value={activeColors.secondary_light} onChange={(e) => setCustomColors(prev => ({ ...prev, secondary_light: e.target.value }))} className="absolute inset-[-10px] opacity-0 cursor-pointer w-[200%] h-[200%]" />
                                       </div>
                                       <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Sekundär<br/>Hell</span>
                                     </div>
                                     <div className="flex flex-col items-center">
-                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.secondary_dark }}>
-                                        <span className="mix-blend-difference font-bold">{activeColors.secondary_dark}</span>
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white relative overflow-hidden" style={{ backgroundColor: activeColors.secondary_dark }}>
+                                        <span className="mix-blend-difference font-bold pointer-events-none">{activeColors.secondary_dark}</span>
+                                        <input type="color" value={activeColors.secondary_dark} onChange={(e) => setCustomColors(prev => ({ ...prev, secondary_dark: e.target.value }))} className="absolute inset-[-10px] opacity-0 cursor-pointer w-[200%] h-[200%]" />
                                       </div>
                                       <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Sekundär<br/>Dunkel</span>
                                     </div>
                                     <div className="flex flex-col items-center">
-                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white" style={{ backgroundColor: activeColors.accent }}>
-                                        <span className="mix-blend-difference font-bold">{activeColors.accent}</span>
+                                      <div className="w-full h-6 rounded border border-slate-800 flex items-center justify-center font-mono text-[7px] text-white relative overflow-hidden" style={{ backgroundColor: activeColors.accent }}>
+                                        <span className="mix-blend-difference font-bold pointer-events-none">{activeColors.accent}</span>
+                                        <input type="color" value={activeColors.accent} onChange={(e) => setCustomColors(prev => ({ ...prev, accent: e.target.value }))} className="absolute inset-[-10px] opacity-0 cursor-pointer w-[200%] h-[200%]" />
                                       </div>
                                       <span className="text-[5.5px] text-slate-500 font-bold uppercase mt-0.5 text-center leading-none">Akzent<br/>&nbsp;</span>
                                     </div>
@@ -4560,24 +5334,25 @@ export default function App() {
                         <strong>Echtzeit-Demaskierung erfolgreich:</strong> Alle Platzhalter im CSS-Redesign wurden lokal im Browser durch Ihre echten Daten (<strong>{manualNames.split(',')[0] || "De-maskierter Name"}</strong>) ersetzt.
                       </p>
                     </div>
-                  </div>
-                      )}
-                  </div>
+                  </>
+                  )}
                 </div>
                 )}
               </div>
+            </div>
             )}
+          </div>
+        )}
 
             {/* Common informational footer */}
             <div className="border-t border-slate-800/80 pt-4 mt-6 flex items-center justify-between text-[10px] text-slate-500">
               <span>System: <strong>AI-Bridge Privacy Suite v1.4</strong></span>
               <span>Lokalzeit: {new Date().toLocaleDateString("de-DE")}</span>
             </div>
-
           </div>
-
         </section>
-
+          </>
+        )}
       </main>
 
       {/* Footer */}
@@ -4597,131 +5372,30 @@ export default function App() {
       {isRedesignFullscreen && redesignResult && (
         <div className="fixed inset-0 bg-[#020617]/95 backdrop-blur-md z-50 flex flex-col p-4 sm:p-6 overflow-hidden">
           {/* Fullscreen Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4 mb-4">
-            <div className="flex items-center gap-2">
-              <span className="flex items-center justify-center w-6 h-6 rounded-lg bg-yellow-500/10 text-yellow-400 border border-yellow-500/20">
-                <Sparkles className="h-4 w-4 animate-pulse" />
-              </span>
-              <div>
-                <h2 className="text-sm font-extrabold text-white tracking-tight leading-none">Redesign: Vollbild-Prüfung</h2>
-                <span className="text-[10px] text-slate-400 mt-1 block">Visualisierung des optimalen Druckergebnisses und freie Editierung.</span>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Document switcher */}
-              <div className="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setRedesignSelectedDoc("resume")}
-                  className={`px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
-                    redesignSelectedDoc === "resume"
-                      ? "bg-yellow-500 text-slate-950"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <FileText className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                  Lebenslauf (CV)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRedesignSelectedDoc("cover_letter")}
-                  className={`px-3 py-1.5 text-[10px] sm:text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
-                    redesignSelectedDoc === "cover_letter"
-                      ? "bg-yellow-500 text-slate-950"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  <Briefcase className="h-3 w-3 sm:h-3.5 sm:w-3.5" />
-                  Motivationsschreiben
-                </button>
-              </div>
-
-              {/* Direct Edit Toggle */}
-              <button
-                type="button"
-                onClick={() => setIsEditingEnabled(!isEditingEnabled)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-semibold transition border ${
-                  isEditingEnabled 
-                    ? "bg-yellow-500/20 border-yellow-500 text-yellow-400" 
-                    : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
-                }`}
-                title="Schaltet direkte Bearbeitung im Dokument ein/aus"
-              >
-                <Edit3 className="h-3.5 w-3.5" />
-                {isEditingEnabled ? "Editieren aktiv" : "Direkt bearbeiten"}
-              </button>
-
-              {/* Download & Print Button */}
-              <button
-                type="button"
-                onClick={downloadRedesignHtml}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-[10px] sm:text-xs font-bold rounded-lg transition shadow-md"
-              >
-                <Download className="h-3.5 w-3.5" />
-                HTML Code
-              </button>
-              <button
-                type="button"
-                onClick={printRedesignHtml}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500 hover:bg-yellow-400 text-slate-950 text-[10px] sm:text-xs font-extrabold rounded-lg transition shadow-md shadow-yellow-500/10"
-              >
-                <Printer className="h-3.5 w-3.5" />
-                Drucken / PDF sichern
-              </button>
-
-              {/* Close Fullscreen */}
-              <button
-                type="button"
-                onClick={() => setIsRedesignFullscreen(false)}
-                className="p-1.5 hover:bg-slate-900 rounded-lg border border-slate-800 text-slate-400 hover:text-slate-200 transition"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-bold text-white">Vollbild-Vorschau</h3>
+            <button
+              type="button"
+              onClick={() => setIsRedesignFullscreen(false)}
+              className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-bold"
+            >
+              Schließen
+            </button>
           </div>
-
-          {/* Fullscreen Iframe Container */}
-          <div className="flex-1 bg-slate-950/40 rounded-2xl border border-slate-800/80 p-2 sm:p-4 flex justify-center items-center overflow-auto shadow-inner relative">
-            {isEditingEnabled && (
-              <div className="absolute top-4 right-4 bg-yellow-500/95 text-slate-950 text-[10px] font-extrabold px-3 py-1 rounded-full shadow-md pointer-events-none z-10 animate-pulse">
-                ✍️ Bearbeitungsmodus aktiv (Direkt in den Text klicken & losschreiben)
-              </div>
-            )}
+          <div className="flex-1 bg-white rounded-xl overflow-hidden relative">
             <iframe
-              title="Redesign Fullscreen Preview"
-              ref={redesignIframeRef}
-              srcDoc={`
-                <!DOCTYPE html>
-                <html>
-                  <head>
-                    <meta charset="utf-8">
-                    <style>
-                      body { margin: 0; padding: 0; }
-                      ${redesignSelectedDoc === "resume" ? redesignResult?.[redesignSelectedStyle]?.resume?.css : redesignResult?.[redesignSelectedStyle]?.cover_letter?.css}
-                      /* Custom editable element styling so they don't stand out when printed */
-                      [contenteditable="true"] {
-                        outline: none !important;
-                      }
-                      [contenteditable="true"]:focus {
-                        outline: 1px dashed rgba(250, 204, 21, 0.5) !important;
-                        outline-offset: 2px;
-                      }
-                    </style>
-                  </head>
-                  <body ${isEditingEnabled ? 'contenteditable="true"' : ''}>
-                    ${redesignSelectedDoc === "resume" ? redesignResult?.[redesignSelectedStyle]?.resume?.html : redesignResult?.[redesignSelectedStyle]?.cover_letter?.html}
-                  </body>
-                </html>
-              `}
-              onLoad={handleIframeLoad}
-              className="w-[210mm] h-[297mm] max-w-full max-h-full bg-white rounded-lg shadow-2xl border border-slate-900"
-              sandbox="allow-scripts allow-same-origin"
+              title="Fullscreen Document Preview"
+              srcDoc={
+                redesignSelectedDoc === "resume"
+                  ? redesignResult[redesignSelectedStyle]?.resume?.html
+                  : redesignResult[redesignSelectedStyle]?.cover_letter?.html
+              }
+              className="w-full h-full border-0"
+              sandbox="allow-same-origin allow-scripts"
             />
           </div>
         </div>
       )}
-
     </div>
   );
 }
