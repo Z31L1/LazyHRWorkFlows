@@ -1732,9 +1732,7 @@ export default function App() {
   };
 
   // --- Relax GDPR and send PDF directly to the Gemma model ---
-  const handleRelaxGdprAndProcess = async () => {
-    if (!unreadableFile || !unreadableType) return;
-    
+  const processDirectPdfBypass = async (file: File, type: "ats" | "motivation" | "jd" | "redesign") => {
     setIsProcessingDirectPdf(true);
     setApiError(null);
     
@@ -1743,10 +1741,10 @@ export default function App() {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result as string);
         reader.onerror = (e) => reject(new Error("Fehler beim Lesen der Datei für den Direktversand: " + e));
-        reader.readAsDataURL(unreadableFile);
+        reader.readAsDataURL(file);
       });
 
-      const modeParam = unreadableType === "ats" ? "ats" : "text";
+      const modeParam = type === "ats" ? "ats" : "text";
       const response = await fetch("/api/process-direct-pdf", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1764,27 +1762,35 @@ export default function App() {
 
       const result = await response.json();
       
-      if (unreadableType === "ats") {
+      if (type === "ats") {
         const structData = result.data;
         setKiResponseText(JSON.stringify(structData, null, 2));
         setParsedResumeData(structData);
-      } else if (unreadableType === "motivation") {
+      } else if (type === "motivation") {
         setMotivationExtractedText(result.text || "");
         setMotivationMaskedText(result.text || "");
-      } else if (unreadableType === "redesign") {
+      } else if (type === "redesign") {
         setRedesignExtractedText(result.text || "");
         setRedesignMaskedText(result.text || "");
-      } else if (unreadableType === "jd") {
+      } else if (type === "jd") {
         setJdExtractedText(result.text || "");
       }
 
-      // Success: clear unreadable state
-      setUnreadableFile(null);
-      setUnreadableType(null);
+      // Success: clear unreadable state if it matches
+      if (unreadableFile === file) {
+        setUnreadableFile(null);
+        setUnreadableType(null);
+      }
     } catch (err: any) {
       setApiError("Fehler bei der direkten Analyse (DSGVO-gelockert): " + err.message);
     } finally {
       setIsProcessingDirectPdf(false);
+    }
+  };
+
+  const handleRelaxGdprAndProcess = () => {
+    if (unreadableFile && unreadableType) {
+      processDirectPdfBypass(unreadableFile, unreadableType);
     }
   };
 
@@ -3104,6 +3110,21 @@ export default function App() {
                     )}
                     {isAtsSending ? "KI analysiert und strukturiert..." : "Anonymisierten Text an KI senden"}
                   </button>
+
+                  {atsPdfFile && (
+                    <button
+                      onClick={() => processDirectPdfBypass(atsPdfFile, "ats")}
+                      disabled={isProcessingDirectPdf || isAtsSending}
+                      className="w-full py-2.5 mt-2 bg-slate-900 border border-slate-700 hover:border-red-500/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 font-semibold rounded-xl text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {isProcessingDirectPdf ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      )}
+                      Text fehlerhaft? Gesamtes PDF direkt an KI senden (DSGVO aussetzen)
+                    </button>
+                  )}
                 </motion.div>
               )}
             </div>
@@ -3391,6 +3412,21 @@ export default function App() {
                     )}
                     {isMatchSending ? "Analysiere & Generiere..." : "Abgleich & Anschreiben erstellen"}
                   </button>
+
+                  {motivationPdfFile && (
+                    <button
+                      onClick={() => processDirectPdfBypass(motivationPdfFile, "motivation")}
+                      disabled={isProcessingDirectPdf || isMatchSending}
+                      className="w-full py-2.5 mt-2 bg-slate-900 border border-slate-700 hover:border-red-500/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 font-semibold rounded-xl text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      {isProcessingDirectPdf ? (
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                      )}
+                      Lebenslauf-Text fehlerhaft? Gesamtes PDF an KI senden (DSGVO aussetzen)
+                    </button>
+                  )}
                 </motion.div>
               )}
             </div>
@@ -3707,6 +3743,21 @@ export default function App() {
                       )}
                       {isRedesignSending ? "Berechne harmonisches Design..." : "Harmonisches Design generieren"}
                     </button>
+
+                    {redesignPdfFile && (
+                      <button
+                        onClick={() => processDirectPdfBypass(redesignPdfFile, "redesign")}
+                        disabled={isProcessingDirectPdf || isRedesignSending}
+                        className="w-full py-2.5 mt-2 bg-slate-900 border border-slate-700 hover:border-red-500/50 hover:bg-red-950/30 text-slate-400 hover:text-red-400 font-semibold rounded-xl text-[11px] transition flex items-center justify-center gap-1.5 cursor-pointer"
+                      >
+                        {isProcessingDirectPdf ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <AlertTriangle className="h-3.5 w-3.5" />
+                        )}
+                        Text fehlerhaft? Gesamtes PDF an KI senden (DSGVO aussetzen)
+                      </button>
+                    )}
                   </div>
                 </motion.div>
               )}
