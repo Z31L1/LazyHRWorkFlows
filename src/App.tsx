@@ -1174,9 +1174,51 @@ export default function App() {
       }
     }
     if (finalHtml) {
+      // Forcefully remove any contenteditable="false" attributes that might block editing
+      finalHtml = finalHtml.replace(/contenteditable=["']?false["']?/gi, '');
+      
       // Ensure the downloaded HTML is editable
       if (!/contenteditable/i.test(finalHtml)) {
         finalHtml = finalHtml.replace(/<body/i, '<body contenteditable="true"');
+      } else {
+        // If it exists but is false or malformed, we already removed 'false', but just in case,
+        // let's make sure the body is contenteditable
+        finalHtml = finalHtml.replace(/<body([^>]*)contenteditable=["']?[^"'>]*["']?([^>]*)>/i, '<body$1contenteditable="true"$2>');
+        if (!/<body[^>]*contenteditable/i.test(finalHtml)) {
+          finalHtml = finalHtml.replace(/<body/i, '<body contenteditable="true"');
+        }
+      }
+      
+      // Inject document.designMode and a small UI hint if they open it in a browser, 
+      // as well as CSS to prevent un-selectable text.
+      const editScript = `
+        <style>
+          * { user-select: text !important; pointer-events: auto !important; }
+          body { padding-top: 30px !important; }
+          #edit-banner {
+            position: fixed; top: 0; left: 0; right: 0; background: #facc15; color: #000;
+            text-align: center; font-family: sans-serif; font-size: 12px; font-weight: bold;
+            padding: 8px; z-index: 999999; border-bottom: 1px solid #ca8a04;
+          }
+          @media print { #edit-banner { display: none !important; } body { padding-top: 0 !important; } }
+        </style>
+        <div id="edit-banner" contenteditable="false">Dieser Lebenslauf ist vollständig editierbar. Klicken Sie auf einen beliebigen Text, um ihn zu ändern. Drücken Sie Strg+P (oder Cmd+P), um ihn als PDF zu speichern.</div>
+        <script>
+          document.designMode = "on";
+          // Disable default link clicks in edit mode
+          document.addEventListener('click', function(e) {
+            if (e.target.tagName === 'A') {
+              e.preventDefault();
+            }
+          });
+        </script>
+      `;
+
+      // Insert before </body> if present, else at the end
+      if (finalHtml.includes('</body>')) {
+        finalHtml = finalHtml.replace('</body>', `${editScript}\n</body>`);
+      } else {
+        finalHtml += editScript;
       }
 
       const blob = new Blob([finalHtml], { type: "text/html" });
