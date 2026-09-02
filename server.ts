@@ -332,12 +332,20 @@ export const app = express();
 
 // Body parser with 10mb limit for pasting long resumes/jobs
 app.use(express.json({ limit: "10mb" }));
-
-  // Initialize Gemini client lazily/safely
+  // Initialize Gemini client lazily/safely (Enterprise-Ready PoC)
   const getGeminiClient = () => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
       throw new Error("GEMINI_API_KEY is missing. Please configure it in Settings > Secrets.");
+    }
+    // Modular initialization: allows seamless switch to Vertex AI later
+    const isVertex = process.env.USE_VERTEX_AI === "true";
+    if (isVertex) {
+      return new GoogleGenAI({
+        vertexai: true,
+        project: process.env.GOOGLE_CLOUD_PROJECT || "",
+        location: process.env.GOOGLE_CLOUD_LOCATION || "europe-west3"
+      });
     }
     return new GoogleGenAI({
       apiKey,
