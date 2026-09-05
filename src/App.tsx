@@ -3200,57 +3200,60 @@ export default function App() {
                   />
 
                   <h4 className="font-bold text-slate-100 text-sm mb-2 leading-tight">
-                    Lazy-HR-Workaround: Intelligente Automatisierung für deinen
+                    Lazy-HR-Workaround: Subversive Automatisierung für deinen
                     Bewerbungserfolg
                   </h4>
                   <div className="space-y-2 text-[11px] text-slate-300 leading-relaxed">
                     <p>
-                      Schluss mit frustrierenden Bewerbungsprozessen und
-                      ungesehenen Anschreiben! Moderne Unternehmen nutzen
-                      Algorithmen, um Profile zu filtern – oft auf Kosten der
-                      Menschlichkeit. Lazy-HR-Workaround dreht den Spieß um und
-                      schlägt die Systeme mit ihren eigenen Waffen.
+                      Schluss mit frustrierenden Bewerbungsprozessen und ungesehenen
+                      Anschreiben im digitalen Nirwana! Moderne Unternehmen nutzen
+                      rudimentäre Algorithmen, um Profile zu filtern – stets auf
+                      Kosten der menschlichen Nuance. Lazy-HR-Workaround invertiert
+                      dieses Paradigma und schlägt die Systeme mit ihren eigenen,
+                      unflexiblen Waffen.
                     </p>
                     <p>
-                      Diese App ist die Brücke zwischen deinem Talent und den
-                      automatisierten Recruiting-Plattformen (ATS) der Konzerne.
-                      Statt unzählige Stunden in starre Formulare und künstlich
-                      wirkende Anschreiben zu stecken, optimiert und
-                      synchronisiert Lazy-HR-Workaround deine Daten im
-                      Hintergrund. Wir liefern den HR-Parsern exakt die
-                      strukturierten Payloads und Formate, nach denen sie
-                      suchen.
+                      Diese Applikation fungiert als hochgradig effiziente Schnittstelle
+                      zwischen deinem intrinsischen Talent und den automatisierten
+                      Recruiting-Plattformen (ATS) der Konzern-Oligopole. Statt
+                      Lebenszeit in starre Formulare und künstlich wirkende Anschreiben
+                      zu verbrennen, orchestriert und synchronisiert Lazy-HR-Workaround
+                      deine Metadaten im Hintergrund. Wir injizieren den HR-Parsern exakt
+                      die strukturierten Payloads und Formate, die ihre binären
+                      Schwellenwerte triggern.
                     </p>
                     <p className="font-semibold text-slate-200 mt-3 border-t border-slate-800 pt-2">
-                      Deine Vorteile auf einen Blick:
+                      Deine strategischen Vorteile:
                     </p>
                     <ul className="list-disc pl-4 space-y-1.5 text-slate-300">
                       <li>
                         <strong className="text-emerald-400">
                           Maximale Effizienz:
                         </strong>{" "}
-                        Überspringe den Ineffizienz-Ballast klassischer
-                        Online-Bewerbungen.
+                        Eliminiere den redundanten Overhead klassischer Online-Bewerbungen
+                        durch kompromisslose Automatisierung.
                       </li>
                       <li>
                         <strong className="text-emerald-400">
-                          Perfekte Parser-Kompatibilität:
+                          Perfekte Parser-Kompatibilität (Das Dual-PDF-System):
                         </strong>{" "}
-                        Deine Daten kommen garantiert genau so an, dass der
-                        Algorithmus dich positiv bewertet.
+                        Deine Daten passieren jede Firewall. Wir generieren ein
+                        parser-optimiertes Fließtext-PDF, das den semantischen Hunger der
+                        Algorithmen stillt, und liefern parallel ein visuell brillantes
+                        Portfolio-PDF, das den menschlichen Entscheider nach dem Passieren
+                        der maschinellen Triage ästhetisch überzeugt.
                       </li>
                       <li>
                         <strong className="text-emerald-400">
-                          Prozess-Optimierung:
+                          Prozess-Skalierbarkeit:
                         </strong>{" "}
-                        Überlass das fehleranfällige System-Füttern einer
-                        vollautomatischen Architektur und konzentriere dich auf
-                        das, was wirklich zählt: das persönliche Gespräch.
+                        Überlass das fehleranfällige System-Füttern einer autonomen
+                        Architektur und allokiere deine Ressourcen auf das, was wirklich
+                        zählt: die Manipulation im persönlichen Interview.
                       </li>
                     </ul>
-                    <p className="italic text-emerald-400 mt-3 pt-2 border-t border-slate-800 font-medium">
-                      Schluss mit dem HR-Frust. Lass die Maschinen für dich
-                      arbeiten!
+                    <p className="font-bold text-yellow-400 mt-3 pt-2 border-t border-slate-800">
+                      Schluss mit der HR-Frustration. Lass die Maschinen für dich subversiv arbeiten!
                     </p>
                   </div>
                 </div>
@@ -3314,17 +3317,14 @@ export default function App() {
               {/* Hero Headline & Intro */}
               <div className="space-y-3 pt-3">
                 <h1 className="text-3xl sm:text-5xl font-extrabold text-white tracking-tight leading-tight font-display">
-                  Schlage automatisierte HR-Filter mit ihren eigenen Waffen.
+                  Infiltriere automatisierte HR-Filter mit ihren eigenen Algorithmen.
                 </h1>
                 <p className="text-sm sm:text-base text-slate-300 max-w-3xl mx-auto leading-relaxed">
-                  Schluss mit ungesehenen Bewerbungen und kalten
-                  Standardabsagen.{" "}
+                  Schluss mit ungeprüften Bewerbungen und standardisierten Absagen aus der Retorte.{" "}
                   <strong className="text-yellow-400 font-semibold">
                     Lazy-HR-Workaround
                   </strong>{" "}
-                  führt dich Schritt für Schritt von der ATS-Konformitätsprüfung
-                  über das maßgeschneiderte Motivationsschreiben bis hin zum
-                  atemberaubenden, 100% editierbaren HTML/CSS-Redesign.
+                  orchestriert deinen Prozess linear und präzise: Von der rigorosen ATS-Konformitätsprüfung über das parser-optimierte Fließtext-PDF für die maschinelle Triage, bis hin zum visuell atemberaubenden, 100% editierbaren HTML/CSS-Redesign und dem finalen Portfolio-PDF für den humanen Review-Prozess. Maximale Penetration der Systeme, null Technical Debt.
                 </p>
               </div>
             </motion.div>
