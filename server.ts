@@ -481,33 +481,45 @@ app.use(express.json({ limit: "10mb" }));
       return { cleanConts, cleanConf };
     };
 
-    // Try each model in the chain
+    // Try each model in the chain with retry resilience for transient errors
     for (const currentModel of uniqueModelChain) {
-      try {
-        console.log(`[Resilient API] Trying model in chain: ${currentModel}`);
-        
-        const isGemma = currentModel.toLowerCase().includes("gemma");
-        let finalContents = contents;
-        let finalConfig = config;
+      const maxRetries = 2;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          if (attempt > 0) {
+            console.log(`[Resilient API] Retrying ${currentModel} (attempt ${attempt + 1}/${maxRetries + 1}) after transient error...`);
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+          } else {
+            console.log(`[Resilient API] Trying model in chain: ${currentModel}`);
+          }
+          
+          const isGemma = currentModel.toLowerCase().includes("gemma");
+          let finalContents = contents;
+          let finalConfig = config;
 
-        if (isGemma) {
-          const { cleanConts, cleanConf } = prepareGemmaRequest(contents, config);
-          finalContents = cleanConts;
-          finalConfig = cleanConf;
+          if (isGemma) {
+            const { cleanConts, cleanConf } = prepareGemmaRequest(contents, config);
+            finalContents = cleanConts;
+            finalConfig = cleanConf;
+          }
+
+          const response = await ai.models.generateContent({
+            model: currentModel,
+            contents: finalContents,
+            config: finalConfig
+          });
+
+          if (response.text) {
+            console.log(`[Resilient API] Success with model: ${currentModel}`);
+            return response.text;
+          }
+        } catch (err: any) {
+          console.warn(`[Resilient API] Model ${currentModel} attempt ${attempt + 1} failed:`, err.message || err);
+          if (attempt === maxRetries) {
+            // Exceeded retries for this model
+            break;
+          }
         }
-
-        const response = await ai.models.generateContent({
-          model: currentModel,
-          contents: finalContents,
-          config: finalConfig
-        });
-
-        if (response.text) {
-          console.log(`[Resilient API] Success with model: ${currentModel}`);
-          return response.text;
-        }
-      } catch (err: any) {
-        console.warn(`[Resilient API] Model ${currentModel} failed:`, err.message || err);
       }
     }
 
@@ -741,7 +753,7 @@ Lebenslauf: ${text}`;
           }
         };
 
-        resultText = await generateResilientContent(ai, "gemma-4-31b-it", text, {
+        resultText = await generateResilientContent(ai, selectedModel, text, {
           temperature: 0.7,
           thinkingConfig: {
             thinkingLevel: "HIGH" as any
