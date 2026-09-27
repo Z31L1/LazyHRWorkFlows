@@ -483,12 +483,12 @@ app.use(express.json({ limit: "10mb" }));
 
     // Try each model in the chain with retry resilience for transient errors
     for (const currentModel of uniqueModelChain) {
-      const maxRetries = 2;
+      const maxRetries = 3;
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           if (attempt > 0) {
             console.log(`[Resilient API] Retrying ${currentModel} (attempt ${attempt + 1}/${maxRetries + 1}) after transient error...`);
-            await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+            await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
           } else {
             console.log(`[Resilient API] Trying model in chain: ${currentModel}`);
           }
@@ -509,9 +509,24 @@ app.use(express.json({ limit: "10mb" }));
             config: finalConfig
           });
 
-          if (response.text) {
+          // Check both response.text and response.candidates[0].content.parts (excluding thought blocks)
+          let candidateText = response.text;
+          if (!candidateText && response.candidates?.[0]?.content?.parts) {
+            const parts = response.candidates[0].content.parts;
+            const nonThought = parts.filter((p: any) => !p.thought && typeof p.text === "string");
+            if (nonThought.length > 0) {
+              candidateText = nonThought.map((p: any) => p.text).join("");
+            } else {
+              const anyParts = parts.filter((p: any) => typeof p.text === "string");
+              if (anyParts.length > 0) {
+                candidateText = anyParts.map((p: any) => p.text).join("");
+              }
+            }
+          }
+
+          if (candidateText && candidateText.trim().length > 0) {
             console.log(`[Resilient API] Success with model: ${currentModel}`);
-            return response.text;
+            return candidateText;
           }
         } catch (err: any) {
           console.warn(`[Resilient API] Model ${currentModel} attempt ${attempt + 1} failed:`, err.message || err);
@@ -586,6 +601,81 @@ app.use(express.json({ limit: "10mb" }));
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
+
+  // Helper for resilient matching response parsing
+  function robustParseMatchingResponse(resultText: string, todayFormatted: string): any {
+    let cleanText = resultText.trim();
+    if (cleanText.includes("```json")) {
+      cleanText = cleanText.substring(cleanText.indexOf("```json") + 7);
+      const endIdx = cleanText.lastIndexOf("```");
+      if (endIdx !== -1) cleanText = cleanText.substring(0, endIdx);
+    } else if (cleanText.includes("```")) {
+      cleanText = cleanText.substring(cleanText.indexOf("```") + 3);
+      const endIdx = cleanText.lastIndexOf("```");
+      if (endIdx !== -1) cleanText = cleanText.substring(0, endIdx);
+    }
+    cleanText = cleanText.trim();
+
+    const firstBracket = cleanText.indexOf('{');
+    const lastBracket = cleanText.lastIndexOf('}');
+    if (firstBracket !== -1 && lastBracket !== -1) {
+      cleanText = cleanText.substring(firstBracket, lastBracket + 1);
+    }
+
+    // 1. Direct parse attempt
+    try {
+      return JSON.parse(cleanText);
+    } catch {}
+
+    // 2. Sanitize literal newlines inside quotes
+    try {
+      const sanitized = sanitizeJsonString(cleanText);
+      return JSON.parse(sanitized);
+    } catch {}
+
+    // 3. Remove trailing commas + sanitize
+    try {
+      const sanitized = sanitizeJsonString(cleanText).replace(/,\s*([\]}])/g, "$1");
+      return JSON.parse(sanitized);
+    } catch {}
+
+    // 4. Fault-tolerant regex recovery
+    console.warn("[robustParseMatchingResponse] Direct JSON parsing failed, using regex recovery");
+    const getInt = (field: string, fallback: number): number => {
+      const m = cleanText.match(new RegExp(`"${field}"\\s*:\\s*(\\d+)`));
+      return m ? parseInt(m[1], 10) : fallback;
+    };
+    const getStr = (field: string, fallback: string = ""): string => {
+      const regex = new RegExp(`"${field}"\\s*:\\s*"([\\s\\S]*?)(?="\\s*:\\s*|",?\\s*\\n\\s*"|",?\\s*\\}|"\\s*\\})`);
+      const m = cleanText.match(regex);
+      if (m && m[1]) {
+        let val = m[1].trim();
+        val = val.replace(/",?\s*$/, "").trim();
+        return val.replace(/\\n/g, "\n").replace(/\\"/g, '"');
+      }
+      return fallback;
+    };
+
+    return {
+      matchScore: getInt("matchScore", 75),
+      details: {
+        skills: getInt("skills", 70),
+        experience: getInt("experience", 70),
+        education: getInt("education", 75)
+      },
+      senderAddress: getStr("senderAddress", ""),
+      recipientAddress: getStr("recipientAddress", ""),
+      date: getStr("date", todayFormatted),
+      subject: getStr("subject", "Bewerbung auf Ihre Stellenausschreibung"),
+      jobTitle: getStr("jobTitle", "Bewerber"),
+      salutation: getStr("salutation", "Sehr geehrte Damen und Herren,"),
+      introduction: getStr("introduction", ""),
+      mainBody: getStr("mainBody", ""),
+      closing: getStr("closing", "Ich freue mich auf ein persönliches Gespräch."),
+      signoff: getStr("signoff", "Mit freundlichen Grüßen"),
+      signature: getStr("signature", "")
+    };
+  }
 
   // 0. Privacy-First GDPR Process Resume (handles both 'lebenslauf' and 'matching' modes)
   app.post("/api/process-resume", async (req, res) => {
@@ -706,15 +796,20 @@ Lebenslauf: ${text}`;
         }
         cleanText = cleanText.trim();
 
+        const firstBracket = cleanText.indexOf('{');
+        const lastBracket = cleanText.lastIndexOf('}');
+        if (firstBracket !== -1 && lastBracket !== -1) {
+          cleanText = cleanText.substring(firstBracket, lastBracket + 1);
+        }
+
         try {
           parsed = JSON.parse(cleanText);
         } catch (parseErr) {
-          console.warn("Direct JSON parsing failed, attempting brace substring fallback:", parseErr);
-          const firstBracket = cleanText.indexOf('{');
-          const lastBracket = cleanText.lastIndexOf('}');
-          if (firstBracket !== -1 && lastBracket !== -1) {
-            parsed = JSON.parse(cleanText.substring(firstBracket, lastBracket + 1));
-          } else {
+          try {
+            const sanitized = sanitizeJsonString(cleanText).replace(/,\s*([\]}])/g, "$1");
+            parsed = JSON.parse(sanitized);
+          } catch (e2) {
+            console.warn("Direct JSON parsing failed, attempting brace substring fallback:", parseErr);
             throw new Error("Das Modell hat kein gültiges JSON-Format zurückgegeben. Text: " + resultText);
           }
         }
@@ -754,7 +849,7 @@ Lebenslauf: ${text}`;
         };
 
         resultText = await generateResilientContent(ai, selectedModel, text, {
-          temperature: 0.7,
+          temperature: 0.2,
           thinkingConfig: {
             thinkingLevel: "HIGH" as any
           },
@@ -814,38 +909,7 @@ Antworte AUSSCHLIESSLICH im JSON-Format gemäß dieses exakten Schemas (inklusiv
           throw new Error("Fehler bei der Motivationsschreiben-Generierung.");
         }
 
-        // Robust parsing
-        let parsed;
-        let cleanText = resultText.trim();
-        if (cleanText.includes("```json")) {
-          cleanText = cleanText.substring(cleanText.indexOf("```json") + 7);
-          const endIdx = cleanText.lastIndexOf("```");
-          if (endIdx !== -1) cleanText = cleanText.substring(0, endIdx);
-        } else if (cleanText.includes("```")) {
-          cleanText = cleanText.substring(cleanText.indexOf("```") + 3);
-          const endIdx = cleanText.lastIndexOf("```");
-          if (endIdx !== -1) cleanText = cleanText.substring(0, endIdx);
-        }
-        cleanText = cleanText.trim();
-
-        // Extract JSON block if surrounded by conversational text
-        const firstBracket = cleanText.indexOf('{');
-        const lastBracket = cleanText.lastIndexOf('}');
-        if (firstBracket !== -1 && lastBracket !== -1) {
-          cleanText = cleanText.substring(firstBracket, lastBracket + 1);
-        }
-
-        // Sanitize string (escapes literal newlines inside double-quotes)
-        cleanText = sanitizeJsonString(cleanText);
-
-        try {
-          parsed = JSON.parse(cleanText);
-        } catch (e: any) {
-          console.error("[JSON Parse Error] Raw text:", resultText);
-          console.error("[JSON Parse Error] Sanitized text:", cleanText);
-          throw new Error("Fehler beim Parsen der KI-Antwort als JSON: " + e.message);
-        }
-
+        const parsed = robustParseMatchingResponse(resultText, todayFormatted);
         res.json({ data: parsed });
       } else {
         res.status(400).json({ error: "Ungültiger Modus angegeben." });

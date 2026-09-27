@@ -1537,9 +1537,16 @@ export default function App() {
   };
 
   const generateStyledLetter = async () => {
-    if (!motivationPdfFile) {
+    const fileToUse = motivationPdfFile || atsPdfFile || redesignPdfFile;
+    const textToUse =
+      motivationExtractedText ||
+      atsRawExtractedText ||
+      redesignExtractedText ||
+      "";
+
+    if (!fileToUse && !textToUse.trim()) {
       alert(
-        "Bitte laden Sie zuerst einen Lebenslauf (oben unter 'PDFs oder Bilder einfügen') hoch, damit wir dessen Style übernehmen können.",
+        "Bitte laden Sie zuerst einen Lebenslauf hoch oder geben Sie Text ein, damit wir dessen Stil und Inhalte übernehmen können.",
       );
       return;
     }
@@ -1547,8 +1554,10 @@ export default function App() {
     let iframe: HTMLIFrameElement | null = null;
     try {
       const formData = new FormData();
-      formData.append("resume", motivationPdfFile);
-      formData.append("resumeText", motivationExtractedText || "");
+      if (fileToUse) {
+        formData.append("resume", fileToUse);
+      }
+      formData.append("resumeText", textToUse);
       formData.append("letterData", JSON.stringify(structuredLetter));
 
       const response = await fetch("/api/generate-styled-letter", {
@@ -2567,7 +2576,13 @@ export default function App() {
 
   // API Call for Gelb-Schwarz-Redesign using Gemma (Dual-Stil orthogonal + kurvlinear)
   const sendRedesignToAI = async () => {
-    const textToSend = redesignMaskedText || redesignExtractedText;
+    const textToSend =
+      redesignMaskedText ||
+      redesignExtractedText ||
+      atsMaskedText ||
+      atsRawExtractedText ||
+      motivationMaskedText ||
+      motivationExtractedText;
     if (!textToSend.trim()) {
       setApiError(
         "Bitte laden Sie einen Lebenslauf hoch oder geben Sie Lebenslauf-Inhalt ein.",
@@ -2808,7 +2823,13 @@ export default function App() {
 
   // --- API process-resume for ATS Mode ---
   const sendAtsToAI = async () => {
-    const textToSend = atsMaskedText || atsRawExtractedText;
+    const textToSend =
+      atsMaskedText ||
+      atsRawExtractedText ||
+      motivationMaskedText ||
+      motivationExtractedText ||
+      redesignMaskedText ||
+      redesignExtractedText;
     if (!textToSend.trim()) {
       setApiError(
         "Bitte laden Sie einen Lebenslauf hoch oder maskieren Sie die Daten.",
@@ -2820,7 +2841,7 @@ export default function App() {
     setApiError(null);
 
     try {
-      const response = await fetch("/api/process-resume", {
+      let response = await fetch("/api/process-resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2830,10 +2851,26 @@ export default function App() {
         }),
       });
 
+      if (!response.ok && (response.status === 500 || response.status === 503)) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        response = await fetch("/api/process-resume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: textToSend,
+            mode: "lebenslauf",
+            model: modelName,
+          }),
+        });
+      }
+
       if (!response.ok) {
-        throw new Error(
-          `API returned error state: ${response.status} ${response.statusText}`,
-        );
+        let errMsg = `API meldet Status ${response.status} (${response.statusText})`;
+        try {
+          const errData = await response.json();
+          if (errData?.error) errMsg = errData.error;
+        } catch {}
+        throw new Error(errMsg);
       }
 
       const result = await response.json();
@@ -3078,12 +3115,18 @@ export default function App() {
 
   // --- Matching / Motivationsschreiben generation ---
   const sendMatchingToAI = async () => {
-    const cvText = motivationMaskedText || motivationExtractedText;
+    const cvText =
+      motivationMaskedText ||
+      motivationExtractedText ||
+      atsMaskedText ||
+      atsRawExtractedText ||
+      redesignMaskedText ||
+      redesignExtractedText;
     const jdText = jdMaskedText || jdExtractedText;
 
-    if (!motivationExtractedText.trim() || !jdExtractedText.trim()) {
+    if (!cvText.trim() || !jdText.trim()) {
       setApiError(
-        "Bitte laden Sie sowohl die Lebenslauf-PDF als auch die Stellenausschreibung-PDF hoch.",
+        "Bitte stellen Sie sicher, dass sowohl ein Lebenslauf als auch eine Stellenausschreibung vorhanden sind (über Upload oder direkte Texteingabe).",
       );
       return;
     }
@@ -3097,7 +3140,7 @@ export default function App() {
       `[Ziel-Stellenausschreibung]\n${jdText}`;
 
     try {
-      const response = await fetch("/api/process-resume", {
+      let response = await fetch("/api/process-resume", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -3107,14 +3150,30 @@ export default function App() {
         }),
       });
 
+      if (!response.ok && (response.status === 500 || response.status === 503)) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        response = await fetch("/api/process-resume", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            text: combinedContent,
+            mode: "matching",
+            model: modelName,
+          }),
+        });
+      }
+
       if (!response.ok) {
-        throw new Error(
-          `API returned error state: ${response.status} ${response.statusText}`,
-        );
+        let errMsg = `API meldet Status ${response.status} (${response.statusText})`;
+        try {
+          const errData = await response.json();
+          if (errData?.error) errMsg = errData.error;
+        } catch {}
+        throw new Error(errMsg);
       }
 
       const result = await response.json();
-      const parsedData = result.data;
+      const parsedData = result.data || {};
 
       // Store the full structured response
       setGeneratedMatchingResult(JSON.stringify(parsedData));
@@ -3122,10 +3181,14 @@ export default function App() {
       const deMaskString = (str: string | undefined | null) => {
         if (!str) return "";
         let demasked = str;
-        const realName = manualNames.split(",")[0] || "De-maskierter Name";
+        const realName =
+          manualNames.split(",")[0]?.trim() ||
+          maskMap.name ||
+          "Bewerber";
         demasked = demasked.replace(/\[NAME_MASKED\]/g, realName);
         demasked = demasked.replace(/\[EMAIL_MASKED\]/g, maskMap.email || "");
         demasked = demasked.replace(/\[PHONE_MASKED\]/g, maskMap.phone || "");
+        demasked = demasked.replace(/\[ADDRESS_MASKED\]/g, maskMap.address || "");
         return demasked;
       };
 
@@ -3620,6 +3683,33 @@ export default function App() {
                       )}
                     </div>
 
+                    {/* Option to adopt CV from Scenario 2 or 3 if already loaded */}
+                    {!atsRawExtractedText && (motivationExtractedText || redesignExtractedText) && (
+                      <div className="bg-emerald-950/40 border border-emerald-500/40 rounded-xl p-3 flex items-center justify-between text-xs shadow-sm">
+                        <div className="flex items-center gap-2 text-emerald-300">
+                          <FileText className="h-4 w-4 text-emerald-400 shrink-0" />
+                          <span>
+                            Lebenslauf aus anderem Szenario vorhanden{" "}
+                            <strong>({(motivationPdfFile || redesignPdfFile)?.name || "Text"})</strong>.
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const text = motivationExtractedText || redesignExtractedText;
+                            const masked = motivationMaskedText || redesignMaskedText || text;
+                            const file = motivationPdfFile || redesignPdfFile;
+                            setAtsRawExtractedText(text);
+                            setAtsMaskedText(masked);
+                            if (file) setAtsPdfFile(file);
+                          }}
+                          className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[11px] font-bold transition cursor-pointer"
+                        >
+                          Übernehmen
+                        </button>
+                      </div>
+                    )}
+
                     {unreadableType === "ats" && unreadableFile ? (
                       <div className="bg-red-950/50 border border-red-500/80 rounded-xl p-4 space-y-3 shadow-lg">
                         <div className="flex gap-2.5">
@@ -3893,7 +3983,7 @@ export default function App() {
                   </div>
 
                   {/* SCHRITT 2: ANONYMISIERUNG (WIRDT ERST FREIGESCHALTET, WENN SCHRITT 1 AUSGEFÜLLT IST) */}
-                  {(!!atsRawExtractedText || !!parsedResumeData) && (
+                  {(!!atsRawExtractedText || !!parsedResumeData || !!motivationExtractedText || !!redesignExtractedText) && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -3958,7 +4048,7 @@ export default function App() {
                               type="button"
                               onClick={() => handleConfirmNameMasking()}
                               disabled={
-                                !atsRawExtractedText && !parsedResumeData
+                                !atsRawExtractedText && !parsedResumeData && !motivationExtractedText && !redesignExtractedText
                               }
                               className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md shrink-0 cursor-pointer"
                               id="btn-mask-names-action"
@@ -3972,7 +4062,7 @@ export default function App() {
                   )}
 
                   {/* SCHRITT 3: VORSCHAU PAYLOAD & KI-ANALYSE */}
-                  {(!!atsRawExtractedText || !!parsedResumeData) && (
+                  {(!!atsRawExtractedText || !!parsedResumeData || !!motivationExtractedText || !!redesignExtractedText) && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -3988,7 +4078,7 @@ export default function App() {
                         </label>
                       </div>
 
-                      {atsMaskedText && (
+                      {(atsMaskedText || (!atsMaskedText && (motivationMaskedText || redesignMaskedText))) && (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between text-xs">
                             <span className="font-semibold text-slate-400 text-[11px]">
@@ -3996,7 +4086,7 @@ export default function App() {
                             </span>
                             <button
                               onClick={() =>
-                                triggerCopy(atsMaskedText, "masked-cv")
+                                triggerCopy(atsMaskedText || motivationMaskedText || redesignMaskedText, "masked-cv")
                               }
                               className="text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1 text-[10px]"
                             >
@@ -4011,7 +4101,7 @@ export default function App() {
                             </button>
                           </div>
                           <textarea
-                            value={atsMaskedText}
+                            value={atsMaskedText || motivationMaskedText || redesignMaskedText}
                             onChange={(e) => setAtsMaskedText(e.target.value)}
                             className="w-full h-28 bg-slate-950 text-slate-300 border border-slate-800 rounded-lg p-2.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
                             id="ai-cv-textarea"
@@ -4035,7 +4125,7 @@ export default function App() {
                       <div className="mb-4 p-3 bg-red-950/20 border border-red-900/30 rounded-xl text-[10px] text-red-300 leading-relaxed"><strong className="text-red-400 block mb-1">Datenschutz-Warnung (Free API PoC):</strong> Auch bei Namens-Maskierung können Ihre Daten durch den inhaltlichen Kontext (Werdegang) identifizierbar bleiben. Dieses System nutzt die kostenlose Google AI Studio API. <strong>Ihre Daten werden von Google für das KI-Training verwendet und potenziell durch menschliche Reviewer gelesen.</strong> Nutzen Sie keine sensiblen Klardaten.</div>
                       <button
                         onClick={sendAtsToAI}
-                        disabled={isAtsSending || !atsRawExtractedText}
+                        disabled={isAtsSending || (!atsRawExtractedText && !motivationExtractedText && !redesignExtractedText)}
                         className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition shadow-lg shadow-emerald-600/15 flex items-center justify-center gap-2 cursor-pointer"
                         id="btn-process-cv-ai"
                       >
@@ -4099,7 +4189,7 @@ export default function App() {
                       <div className="flex items-center gap-2">
                         <span
                           className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold border ${
-                            motivationExtractedText && jdExtractedText
+                            (motivationExtractedText || atsRawExtractedText) && jdExtractedText
                               ? "bg-indigo-500 text-slate-950 border-indigo-400"
                               : unreadableType === "motivation" ||
                                   unreadableType === "jd"
@@ -4107,21 +4197,48 @@ export default function App() {
                                 : "bg-indigo-600/20 text-indigo-400 border-indigo-500/30"
                           }`}
                         >
-                          {motivationExtractedText && jdExtractedText
+                          {(motivationExtractedText || atsRawExtractedText) && jdExtractedText
                             ? "✓"
                             : "1"}
                         </span>
                         <label className="block text-xs font-semibold text-slate-300">
-                          Punkt 1: Dokumente hochladen (Lebenslauf +
+                          Punkt 1: Dokumente bereitstellen (Lebenslauf +
                           Stellenausschreibung)
                         </label>
                       </div>
-                      {motivationExtractedText && jdExtractedText && (
+                      {(motivationExtractedText || atsRawExtractedText) && jdExtractedText && (
                         <span className="text-[10px] font-bold text-indigo-400 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-800">
                           Punkt 1 abgeschlossen
                         </span>
                       )}
                     </div>
+
+                    {/* Option to adopt CV from Scenario 1 or 3 if already loaded */}
+                    {!motivationExtractedText && (atsRawExtractedText || redesignExtractedText) && (
+                      <div className="bg-indigo-950/40 border border-indigo-500/40 rounded-xl p-3 flex items-center justify-between text-xs shadow-sm">
+                        <div className="flex items-center gap-2 text-indigo-300">
+                          <FileText className="h-4 w-4 text-indigo-400 shrink-0" />
+                          <span>
+                            Lebenslauf aus anderem Szenario vorhanden{" "}
+                            <strong>({(atsPdfFile || redesignPdfFile)?.name || "Text"})</strong>.
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const text = atsRawExtractedText || redesignExtractedText;
+                            const masked = atsMaskedText || redesignMaskedText || text;
+                            const file = atsPdfFile || redesignPdfFile;
+                            setMotivationExtractedText(text);
+                            setMotivationMaskedText(masked);
+                            if (file) setMotivationPdfFile(file);
+                          }}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[11px] font-bold transition cursor-pointer"
+                        >
+                          Übernehmen
+                        </button>
+                      </div>
+                    )}
 
                     {(unreadableType === "motivation" ||
                       unreadableType === "jd") &&
@@ -4180,7 +4297,7 @@ export default function App() {
                       <>
                         <div className="space-y-2">
                           <label className="block text-[10px] font-medium text-slate-400">
-                            Dein Lebenslauf PDF/Bild
+                            Dein Lebenslauf (PDF, Bild oder direkter Text)
                           </label>
                           <div className="border-2 border-dashed border-slate-700 hover:border-blue-500/50 rounded-xl p-3 text-center transition bg-slate-950/40 relative cursor-pointer">
                             <input
@@ -4204,14 +4321,23 @@ export default function App() {
                           {motivationExtractedText &&
                             !isMotivationExtracting && (
                               <span className="text-emerald-400 text-[10px] block px-1">
-                                ✓ Lebenslauf-Text geladen.
+                                ✓ Lebenslauf-Text geladen ({motivationExtractedText.length} Zeichen).
                               </span>
                             )}
+                          <textarea
+                            value={motivationExtractedText}
+                            onChange={(e) => {
+                              setMotivationExtractedText(e.target.value);
+                              performMasking(e.target.value, appliedNames, setMotivationMaskedText, false);
+                            }}
+                            placeholder="Oder Lebenslauf-Text direkt hier eingeben / bearbeiten..."
+                            className="w-full h-20 bg-slate-950/80 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500/40"
+                          />
                         </div>
 
                         <div className="space-y-2">
                           <label className="block text-[10px] font-medium text-slate-400">
-                            Stellenausschreibung PDF/Bild
+                            Stellenausschreibung (PDF, Bild oder Text einfügen)
                           </label>
                           <div className="border-2 border-dashed border-slate-700 hover:border-blue-500/50 rounded-xl p-3 text-center transition bg-slate-950/40 relative cursor-pointer">
                             <input
@@ -4234,16 +4360,27 @@ export default function App() {
                           )}
                           {jdExtractedText && !isJdExtracting && (
                             <span className="text-emerald-400 text-[10px] block px-1">
-                              ✓ Stellenausschreibung geladen.
+                              ✓ Stellenausschreibung geladen ({jdExtractedText.length} Zeichen).
                             </span>
                           )}
+                          <textarea
+                            value={jdExtractedText}
+                            onChange={(e) => {
+                              setJdExtractedText(e.target.value);
+                              if (appliedNames.trim()) {
+                                performMasking(e.target.value, appliedNames, setJdMaskedText, true);
+                              }
+                            }}
+                            placeholder="Oder Stellenausschreibungs-Text direkt hier hineinkopieren (LinkedIn, StepStone, Jobportal etc.)..."
+                            className="w-full h-20 bg-slate-950/80 border border-slate-800 rounded-lg p-2 text-[10px] font-mono text-slate-300 focus:outline-none focus:ring-1 focus:ring-indigo-500/40"
+                          />
                         </div>
                       </>
                     )}
                   </div>
 
                   {/* SCHRITT 2: ANONYMISIERUNG (FREIGESCHALTET SOBALD EIN TEXT GELADEN IST) */}
-                  {(!!motivationExtractedText || !!jdExtractedText) && (
+                  {(!!motivationExtractedText || !!atsRawExtractedText || !!jdExtractedText) && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -4307,7 +4444,7 @@ export default function App() {
                               type="button"
                               onClick={() => handleConfirmNameMasking()}
                               disabled={
-                                !motivationExtractedText && !jdExtractedText
+                                !motivationExtractedText && !atsRawExtractedText && !redesignExtractedText && !jdExtractedText
                               }
                               className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-slate-800 text-white rounded-lg text-xs font-bold transition shadow-md shrink-0 cursor-pointer"
                             >
@@ -4320,7 +4457,7 @@ export default function App() {
                   )}
 
                   {/* SCHRITT 3: VORSCHAU & KI MATCHING */}
-                  {(!!motivationExtractedText || !!jdExtractedText) && (
+                  {(!!motivationExtractedText || !!atsRawExtractedText || !!redesignExtractedText || !!jdExtractedText) && (
                     <motion.div
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
@@ -4336,13 +4473,13 @@ export default function App() {
                         </label>
                       </div>
 
-                      {motivationMaskedText && (
+                      {(motivationMaskedText || (!motivationMaskedText && (atsMaskedText || redesignMaskedText))) && (
                         <div className="space-y-1.5 pt-1">
                           <span className="block text-[11px] font-semibold text-slate-400">
                             Maskierter Lebenslauf Text:
                           </span>
                           <textarea
-                            value={motivationMaskedText}
+                            value={motivationMaskedText || atsMaskedText || redesignMaskedText}
                             onChange={(e) =>
                               setMotivationMaskedText(e.target.value)
                             }
@@ -4402,7 +4539,7 @@ export default function App() {
                         onClick={sendMatchingToAI}
                         disabled={
                           isMatchSending ||
-                          !motivationExtractedText ||
+                          (!motivationExtractedText && !atsRawExtractedText) ||
                           !jdExtractedText
                         }
                         className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-850 disabled:text-slate-600 text-white font-bold rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/15 cursor-pointer"
