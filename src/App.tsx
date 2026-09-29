@@ -47,6 +47,10 @@ import {
   HelpCircle,
   CheckCircle2,
   Upload,
+  Send,
+  FileCode,
+  Code,
+  Layout,
 } from "lucide-react";
 import { AtsGauge } from "./components/AtsGauge";
 import logo from "./logo.png";
@@ -1362,6 +1366,493 @@ export default function App() {
     accent: "#f59e0b",
   });
   const [generatedLetterHtml, setGeneratedLetterHtml] = useState("");
+  const [scenario2Template, setScenario2Template] = useState<{
+    html: string;
+    css: string;
+    source: "scenario3" | "uploaded" | "custom" | "default";
+    title?: string;
+  } | null>(null);
+  const [scenario2ViewMode, setScenario2ViewMode] = useState<"structured" | "design" | "code">("structured");
+  const [scenario2Notification, setScenario2Notification] = useState<string | null>(null);
+  const [isPasteHtmlModalOpen, setIsPasteHtmlModalOpen] = useState(false);
+  const [pastedHtmlInput, setPastedHtmlInput] = useState("");
+
+  // Helper to ensure structured letter has complete, sensible data for template injection
+  const ensureStructuredLetterData = (letter: any, fallbackMap?: Record<string, string>) => {
+    const s = letter || {};
+    const map = fallbackMap || maskMap;
+    const candidateSender = [
+      map.name || "Bewerber Name",
+      map.address || "Musterstraße 12, 10115 Berlin",
+      map.email || "bewerber@example.com",
+      map.phone || "+49 170 1234567",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return {
+      senderAddress: s.senderAddress || candidateSender,
+      recipientAddress:
+        s.recipientAddress ||
+        "Musterfirma GmbH\nPersonalabteilung\nHauptstraße 1\n10115 Berlin",
+      date: s.date || new Date().toLocaleDateString("de-DE"),
+      subject:
+        s.subject ||
+        (s.jobTitle
+          ? `Bewerbung als ${s.jobTitle}`
+          : "Bewerbung auf Ihre Stellenausschreibung"),
+      jobTitle: s.jobTitle || "",
+      salutation: s.salutation || "Sehr geehrte Damen und Herren,",
+      introduction:
+        s.introduction ||
+        "mit großem Interesse habe ich Ihre Stellenausschreibung gelesen und bewerbe mich hiermit um die Position.",
+      mainBody:
+        s.mainBody ||
+        "Durch meine bisherigen beruflichen Stationen und meine Fachkenntnisse kann ich Ihr Team zielgerichtet unterstützen. Ich bringe eine strukturierte Arbeitsweise und hohe Motivation mit.",
+      closing:
+        s.closing ||
+        "Über die Gelegenheit, mich Ihnen in einem persönlichen Gespräch vorzustellen, freue ich mich sehr.",
+      signoff: s.signoff || "Mit freundlichen Grüßen",
+      signature: s.signature || (s.senderAddress ? s.senderAddress.split("\n")[0] : map.name || "Bewerber"),
+    };
+  };
+
+  // Helper to sanitize uploaded or pasted cover letter HTML/CSS
+  const parseAndSanitizeCoverLetterHtml = (rawText: string) => {
+    if (!rawText || !rawText.trim()) {
+      return { cleanHtml: "", css: "", bodyClass: "", bodyStyle: "" };
+    }
+
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawText, "text/html");
+
+      // 1. Strip unwanted helper scripts and banners
+      doc.querySelectorAll("#edit-banner, script").forEach((el) => el.remove());
+
+      // 2. Extract and clean CSS from <style> tags
+      let extractedCss = "";
+      doc.querySelectorAll("style").forEach((s) => {
+        let text = s.textContent || "";
+        // Remove banner-specific rules and unwanted body offsets
+        text = text.replace(/#edit-banner\s*\{[^}]*\}/gi, "");
+        text = text.replace(/body\s*\{[^}]*padding-top:\s*30px[^}]*\}/gi, "");
+        text = text.replace(/overflow:\s*hidden\s*!important;?/gi, "");
+        if (text.trim()) {
+          extractedCss += text + "\n";
+        }
+        s.remove();
+      });
+
+      // 3. Extract body attributes
+      const bodyEl = doc.body;
+      const bodyClass = bodyEl ? bodyEl.getAttribute("class") || "" : "";
+      const bodyStyle = bodyEl ? bodyEl.getAttribute("style") || "" : "";
+
+      // 4. Extract clean inner HTML
+      const cleanHtml = bodyEl ? bodyEl.innerHTML : rawText;
+
+      return {
+        cleanHtml: cleanHtml.trim(),
+        css: extractedCss.trim(),
+        bodyClass,
+        bodyStyle,
+      };
+    } catch {
+      return {
+        cleanHtml: rawText,
+        css: "",
+        bodyClass: "",
+        bodyStyle: "",
+      };
+    }
+  };
+
+  // Helper to extract existing letter fields from an uploaded or transferred cover letter HTML
+  const extractFieldsFromCoverLetterHtml = (rawHtml: string) => {
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(rawHtml, "text/html");
+      doc.querySelectorAll("#edit-banner, script, style").forEach((el) => el.remove());
+
+      const senderEl = doc.querySelector(
+        "[data-field='sender'], [data-field='senderAddress'], .sender, .absender, .sender-address, .contact-sender"
+      );
+      const recipientEl = doc.querySelector(
+        "[data-field='recipient'], [data-field='recipientAddress'], .recipient, .empfaenger, .recipient-address, .company-address"
+      );
+      const dateEl = doc.querySelector(
+        "[data-field='date'], .date, .datum, .letter-date, .brief-datum"
+      );
+      const subjectEl = doc.querySelector(
+        "[data-field='subject'], .subject, .betreff, .letter-subject, .brief-betreff, h1.subject, h2.subject"
+      );
+      const salutationEl = doc.querySelector(
+        "[data-field='salutation'], .salutation, .anrede, .letter-salutation, .brief-anrede"
+      );
+      const signoffEl = doc.querySelector(
+        "[data-field='signoff'], .signoff, .gruss, .grussformel, .letter-signoff"
+      );
+      const signatureEl = doc.querySelector(
+        "[data-field='signature'], .signature, .unterschrift, .letter-signature"
+      );
+
+      const senderText = senderEl?.textContent?.trim();
+      const recipientText = recipientEl?.textContent?.trim();
+      const dateText = dateEl?.textContent?.trim();
+      const subjectText = subjectEl?.textContent?.trim();
+      const salutationText = salutationEl?.textContent?.trim();
+      const signoffText = signoffEl?.textContent?.trim();
+      const signatureText = signatureEl?.textContent?.trim();
+
+      const paragraphs = Array.from(doc.querySelectorAll("p"))
+        .map((p) => p.textContent?.trim())
+        .filter((t) => t && t.length > 15) as string[];
+
+      let intro = "";
+      let mainBody = "";
+      let closing = "";
+
+      if (paragraphs.length >= 3) {
+        intro = paragraphs[0];
+        closing = paragraphs[paragraphs.length - 1];
+        mainBody = paragraphs.slice(1, -1).join("\n\n");
+      } else if (paragraphs.length === 2) {
+        intro = paragraphs[0];
+        mainBody = paragraphs[1];
+      } else if (paragraphs.length === 1) {
+        mainBody = paragraphs[0];
+      }
+
+      return {
+        senderAddress: senderText || undefined,
+        recipientAddress: recipientText || undefined,
+        date: dateText || undefined,
+        subject: subjectText || undefined,
+        salutation: salutationText || undefined,
+        introduction: intro || undefined,
+        mainBody: mainBody || undefined,
+        closing: closing || undefined,
+        signoff: signoffText || undefined,
+        signature: signatureText || undefined,
+      };
+    } catch {
+      return {};
+    }
+  };
+
+  // Helper to inject structured letter fields cleanly into HTML/CSS design template
+  const injectDataIntoLetterHtml = (
+    templateHtml: string,
+    templateCss: string,
+    letter: any,
+    options?: { bodyClass?: string; bodyStyle?: string }
+  ) => {
+    if (!templateHtml) return "";
+
+    let html = templateHtml;
+    const s = ensureStructuredLetterData(letter);
+    const sender = s.senderAddress || "";
+    const recipient = s.recipientAddress || "";
+    const date = s.date || new Date().toLocaleDateString("de-DE");
+    const subject = s.subject || (s.jobTitle ? `Bewerbung als ${s.jobTitle}` : "Bewerbung auf Ihre Stellenausschreibung");
+    const salutation = s.salutation || "Sehr geehrte Damen und Herren,";
+    const intro = s.introduction || "";
+    const mainBody = s.mainBody || "";
+    const closing = s.closing || "";
+    const signoff = s.signoff || "Mit freundlichen Grüßen";
+    const signature = s.signature || (sender ? sender.split("\n")[0] : "Bewerber");
+
+    // Format addresses with linebreaks
+    const formattedSender = sender.replace(/\n/g, "<br>");
+    const formattedRecipient = recipient.replace(/\n/g, "<br>");
+
+    // 1. Direct placeholder replacements if present in template
+    html = html.replace(/\{\{\s*senderAddress\s*\}\}/gi, formattedSender);
+    html = html.replace(/\{\{\s*recipientAddress\s*\}\}/gi, formattedRecipient);
+    html = html.replace(/\{\{\s*date\s*\}\}/gi, date);
+    html = html.replace(/\{\{\s*subject\s*\}\}/gi, subject);
+    html = html.replace(/\{\{\s*salutation\s*\}\}/gi, salutation);
+    html = html.replace(/\{\{\s*introduction\s*\}\}/gi, intro);
+    html = html.replace(/\{\{\s*mainBody\s*\}\}/gi, mainBody);
+    html = html.replace(/\{\{\s*closing\s*\}\}/gi, closing);
+    html = html.replace(/\{\{\s*signoff\s*\}\}/gi, signoff);
+    html = html.replace(/\{\{\s*signature\s*\}\}/gi, signature);
+
+    // 2. Intelligent DOM-based content injection preserving CSS & Layout
+    try {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, "text/html");
+
+      // Strip unwanted helper scripts/banners if any
+      doc.querySelectorAll("#edit-banner, script").forEach((el) => el.remove());
+
+      // Replace sender info
+      const senderEl = doc.querySelector(
+        "[data-field='sender'], [data-field='senderAddress'], .sender-address, .contact-sender, .absender"
+      );
+      if (senderEl && sender) {
+        senderEl.innerHTML = formattedSender;
+      }
+
+      // Replace recipient info
+      const recipientEl = doc.querySelector(
+        "[data-field='recipient'], [data-field='recipientAddress'], .recipient-address, .company-address, .empfaenger"
+      );
+      if (recipientEl && recipient) {
+        recipientEl.innerHTML = formattedRecipient;
+      }
+
+      // Replace date
+      const dateEl = doc.querySelector(
+        "[data-field='date'], .letter-date, .brief-datum, .datum"
+      );
+      if (dateEl && date) {
+        dateEl.textContent = date;
+      }
+
+      // Replace subject
+      const subjectEl = doc.querySelector(
+        "[data-field='subject'], .letter-subject, .brief-betreff, h1.subject, h2.subject"
+      );
+      if (subjectEl && subject) {
+        subjectEl.textContent = subject;
+      }
+
+      // Replace salutation
+      const salutationEl = doc.querySelector(
+        "[data-field='salutation'], .letter-salutation, .brief-anrede, .salutation, .anrede"
+      );
+      if (salutationEl && salutation) {
+        salutationEl.textContent = salutation;
+      }
+
+      // Replace main body / content paragraphs safely (NEVER match generic .content)
+      const bodyEl = doc.querySelector(
+        "[data-field='body'], [data-field='mainBody'], .letter-text-body, .anschreiben-hauptteil, .letter-paragraphs, .cover-letter-body"
+      );
+      if (bodyEl) {
+        const pIntro = intro ? `<p class="letter-intro" style="margin-bottom: 1em;">${intro}</p>` : "";
+        const pMain = mainBody ? `<p class="letter-main" style="margin-bottom: 1em;">${mainBody}</p>` : "";
+        const pClosing = closing ? `<p class="letter-closing" style="margin-bottom: 1em;">${closing}</p>` : "";
+        bodyEl.innerHTML = `${pIntro}${pMain}${pClosing}`;
+      } else {
+        // Look for targeted paragraph classes if available
+        const pIntroEl = doc.querySelector(".letter-intro");
+        const pMainEl = doc.querySelector(".letter-main");
+        const pClosingEl = doc.querySelector(".letter-closing");
+        if (pIntroEl && intro) pIntroEl.textContent = intro;
+        if (pMainEl && mainBody) pMainEl.textContent = mainBody;
+        if (pClosingEl && closing) pClosingEl.textContent = closing;
+      }
+
+      // Replace signoff & signature
+      const signoffEl = doc.querySelector(
+        "[data-field='signoff'], .letter-signoff, .grussformel, .signoff, .gruss"
+      );
+      if (signoffEl && signoff) {
+        signoffEl.textContent = signoff;
+      }
+      const signatureEl = doc.querySelector(
+        "[data-field='signature'], .letter-signature, .unterschrift, .signature"
+      );
+      if (signatureEl && signature) {
+        signatureEl.textContent = signature;
+      }
+
+      const bodyHtml = doc.body ? doc.body.innerHTML : html;
+      const bodyClassAttr = options?.bodyClass ? ` class="${options.bodyClass}"` : "";
+      const bodyStyleAttr = options?.bodyStyle ? ` style="${options.bodyStyle}"` : "";
+
+      return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>${subject}</title>
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    html, body { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box; 
+      width: 100%;
+      font-family: inherit;
+    }
+    ${templateCss || ""}
+    /* DIN A4 print optimizations */
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body${bodyClassAttr}${bodyStyleAttr}>
+  ${bodyHtml}
+</body>
+</html>`;
+    } catch {
+      return `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>${subject}</title>
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    html, body { margin: 0; padding: 0; box-sizing: border-box; width: 100%; }
+    ${templateCss || ""}
+  </style>
+</head>
+<body>
+  ${html}
+</body>
+</html>`;
+    }
+  };
+
+  const handleStructuredLetterChange = (updated: any) => {
+    setStructuredLetter(updated);
+    if (scenario2Template && scenario2Template.html) {
+      const reinjected = injectDataIntoLetterHtml(
+        scenario2Template.html,
+        scenario2Template.css,
+        updated,
+      );
+      setGeneratedLetterHtml(reinjected);
+    }
+  };
+
+  const handleHtmlTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const { cleanHtml, css, bodyClass, bodyStyle } = parseAndSanitizeCoverLetterHtml(text);
+      const extractedFields = extractFieldsFromCoverLetterHtml(cleanHtml);
+
+      const mergedLetter = {
+        ...structuredLetter,
+        ...(extractedFields.senderAddress ? { senderAddress: extractedFields.senderAddress } : {}),
+        ...(extractedFields.recipientAddress ? { recipientAddress: extractedFields.recipientAddress } : {}),
+        ...(extractedFields.date ? { date: extractedFields.date } : {}),
+        ...(extractedFields.subject ? { subject: extractedFields.subject } : {}),
+        ...(extractedFields.salutation ? { salutation: extractedFields.salutation } : {}),
+        ...(extractedFields.introduction ? { introduction: extractedFields.introduction } : {}),
+        ...(extractedFields.mainBody ? { mainBody: extractedFields.mainBody } : {}),
+        ...(extractedFields.closing ? { closing: extractedFields.closing } : {}),
+        ...(extractedFields.signoff ? { signoff: extractedFields.signoff } : {}),
+        ...(extractedFields.signature ? { signature: extractedFields.signature } : {}),
+      };
+
+      setScenario2Template({
+        html: cleanHtml,
+        css: css,
+        source: "uploaded",
+        title: file.name,
+      });
+
+      setStructuredLetter(mergedLetter);
+      const injected = injectDataIntoLetterHtml(cleanHtml, css, mergedLetter, { bodyClass, bodyStyle });
+      setGeneratedLetterHtml(injected);
+      setScenario2ViewMode("design");
+      setScenario2Notification(`HTML-Vorlage "${file.name}" erfolgreich geladen & befüllt!`);
+      setTimeout(() => setScenario2Notification(null), 4000);
+    } catch (err: any) {
+      setApiError("Fehler beim Laden der HTML-Vorlage: " + err.message);
+    }
+  };
+
+  const applyPastedHtmlTemplate = (rawHtml: string) => {
+    if (!rawHtml || !rawHtml.trim()) return;
+    try {
+      const { cleanHtml, css, bodyClass, bodyStyle } = parseAndSanitizeCoverLetterHtml(rawHtml);
+      const extractedFields = extractFieldsFromCoverLetterHtml(cleanHtml);
+
+      const mergedLetter = {
+        ...structuredLetter,
+        ...(extractedFields.senderAddress ? { senderAddress: extractedFields.senderAddress } : {}),
+        ...(extractedFields.recipientAddress ? { recipientAddress: extractedFields.recipientAddress } : {}),
+        ...(extractedFields.date ? { date: extractedFields.date } : {}),
+        ...(extractedFields.subject ? { subject: extractedFields.subject } : {}),
+        ...(extractedFields.salutation ? { salutation: extractedFields.salutation } : {}),
+        ...(extractedFields.introduction ? { introduction: extractedFields.introduction } : {}),
+        ...(extractedFields.mainBody ? { mainBody: extractedFields.mainBody } : {}),
+        ...(extractedFields.closing ? { closing: extractedFields.closing } : {}),
+        ...(extractedFields.signoff ? { signoff: extractedFields.signoff } : {}),
+        ...(extractedFields.signature ? { signature: extractedFields.signature } : {}),
+      };
+
+      setScenario2Template({
+        html: cleanHtml,
+        css: css,
+        source: "custom",
+        title: "Eingefügtes HTML-Design",
+      });
+
+      setStructuredLetter(mergedLetter);
+      const injected = injectDataIntoLetterHtml(cleanHtml, css, mergedLetter, { bodyClass, bodyStyle });
+      setGeneratedLetterHtml(injected);
+      setScenario2ViewMode("design");
+      setIsPasteHtmlModalOpen(false);
+      setPastedHtmlInput("");
+      setScenario2Notification("Motivationsschreiben HTML-Code erfolgreich eingefügt & befüllt!");
+      setTimeout(() => setScenario2Notification(null), 4000);
+    } catch (err: any) {
+      setApiError("Fehler beim Verarbeiten des HTML-Codes: " + err.message);
+    }
+  };
+
+  const downloadFilledLetterHtml = () => {
+    if (!generatedLetterHtml) return;
+    const blob = new Blob([generatedLetterHtml], { type: "text/html;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    const sub = (structuredLetter.subject || "Motivationsschreiben").replace(/[^a-zA-Z0-9_-]/g, "_");
+    link.download = `Motivationsschreiben_${sub}.html`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  };
+
+  const sendCoverLetterToScenario2 = () => {
+    const currentDoc = redesignResult?.[redesignSelectedStyle]?.cover_letter;
+    if (!currentDoc || !currentDoc.html) {
+      alert("Bitte generieren Sie zuerst ein Design in Szenario 3.");
+      return;
+    }
+
+    const { cleanHtml, css } = parseAndSanitizeCoverLetterHtml(
+      `<!DOCTYPE html><html><head><style>${currentDoc.css || ""}</style></head><body>${currentDoc.html || ""}</body></html>`
+    );
+    const extractedFields = extractFieldsFromCoverLetterHtml(cleanHtml);
+
+    const mergedLetter = {
+      ...structuredLetter,
+      ...(extractedFields.senderAddress ? { senderAddress: extractedFields.senderAddress } : {}),
+      ...(extractedFields.recipientAddress ? { recipientAddress: extractedFields.recipientAddress } : {}),
+      ...(extractedFields.date ? { date: extractedFields.date } : {}),
+      ...(extractedFields.subject ? { subject: extractedFields.subject } : {}),
+      ...(extractedFields.salutation ? { salutation: extractedFields.salutation } : {}),
+      ...(extractedFields.introduction ? { introduction: extractedFields.introduction } : {}),
+      ...(extractedFields.mainBody ? { mainBody: extractedFields.mainBody } : {}),
+      ...(extractedFields.closing ? { closing: extractedFields.closing } : {}),
+      ...(extractedFields.signoff ? { signoff: extractedFields.signoff } : {}),
+      ...(extractedFields.signature ? { signature: extractedFields.signature } : {}),
+    };
+
+    setScenario2Template({
+      html: cleanHtml || currentDoc.html,
+      css: css || currentDoc.css,
+      source: "scenario3",
+      title: `Design aus Szenario 3 (${redesignSelectedStyle === "kurvlinear" ? "Kurvlinear" : "Orthogonal"})`,
+    });
+
+    setStructuredLetter(mergedLetter);
+
+    const fullInjected = injectDataIntoLetterHtml(cleanHtml || currentDoc.html, css || currentDoc.css, mergedLetter);
+    setGeneratedLetterHtml(fullInjected);
+    setScenario2ViewMode("design");
+    setActiveMode("motivation");
+    setScenario2Notification("Design-Vorlage aus Szenario 3 erfolgreich für Szenario 2 übernommen und befüllt!");
+    setTimeout(() => setScenario2Notification(null), 4000);
+  };
 
   const letterStats = useMemo(() => {
     return analyzeGermanCoverLetterText(generatedLetterHtml);
@@ -1417,90 +1908,61 @@ export default function App() {
   };
 
   const downloadRedesignHtml = () => {
-    let finalHtml = "";
+    const doc =
+      redesignResult?.[redesignSelectedStyle]?.[redesignSelectedDoc];
+    const docCss = doc?.css || "";
+    let bodyContent = doc?.html || "";
+
     if (redesignIframeRef.current) {
       try {
         const iframeDoc =
           redesignIframeRef.current.contentDocument ||
           redesignIframeRef.current.contentWindow?.document;
-        if (iframeDoc) {
-          finalHtml =
-            iframeDoc.documentElement.outerHTML ||
-            iframeDoc.documentElement.innerHTML;
+        if (iframeDoc && iframeDoc.body) {
+          const clone = iframeDoc.body.cloneNode(true) as HTMLElement;
+          clone.querySelectorAll("#edit-banner, script").forEach((el) => el.remove());
+          bodyContent = clone.innerHTML;
         }
       } catch (e) {
         console.warn("Iframe access failed:", e);
       }
     }
-    if (!finalHtml) {
-      const doc =
-        redesignResult?.[redesignSelectedStyle]?.[redesignSelectedDoc];
-      if (doc) {
-        finalHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body { margin: 0; padding: 0; }\n${doc.css}</style></head><body>${doc.html}</body></html>`;
-      }
-    }
-    if (finalHtml) {
-      // Forcefully remove any contenteditable="false" attributes that might block editing
-      finalHtml = finalHtml.replace(/contenteditable=["']?false["']?/gi, "");
 
-      // Ensure the downloaded HTML is editable
-      if (!/contenteditable/i.test(finalHtml)) {
-        finalHtml = finalHtml.replace(/<body/i, '<body contenteditable="true"');
-      } else {
-        // If it exists but is false or malformed, we already removed 'false', but just in case,
-        // let's make sure the body is contenteditable
-        finalHtml = finalHtml.replace(
-          /<body([^>]*)contenteditable=["']?[^"'>]*["']?([^>]*)>/i,
-          '<body$1contenteditable="true"$2>',
-        );
-        if (!/<body[^>]*contenteditable/i.test(finalHtml)) {
-          finalHtml = finalHtml.replace(
-            /<body/i,
-            '<body contenteditable="true"',
-          );
-        }
-      }
-
-      // Inject document.designMode and a small UI hint if they open it in a browser,
-      // as well as CSS to prevent un-selectable text.
-      const editScript = `
-        <style>
-          * { user-select: text !important; pointer-events: auto !important; }
-          body { padding-top: 30px !important; }
-          #edit-banner {
-            position: fixed; top: 0; left: 0; right: 0; background: #facc15; color: #000;
-            text-align: center; font-family: sans-serif; font-size: 12px; font-weight: bold;
-            padding: 8px; z-index: 999999; border-bottom: 1px solid #ca8a04;
-          }
-          @media print { #edit-banner { display: none !important; } body { padding-top: 0 !important; } }
-        </style>
-        <div id="edit-banner" contenteditable="false">Dieses Dokument (${redesignSelectedDoc === "resume" ? "Portfolio" : "Motivationsschreiben"}) ist vollständig editierbar. Klicken Sie auf einen beliebigen Text, um ihn zu ändern. Drücken Sie Strg+P (oder Cmd+P), um es als PDF zu speichern.</div>
-        <script>
-          document.designMode = "on";
-          // Disable default link clicks in edit mode
-          document.addEventListener('click', function(e) {
-            if (e.target.tagName === 'A') {
-              e.preventDefault();
-            }
-          });
-        </script>
-      `;
-
-      // Insert before </body> if present, else at the end
-      if (finalHtml.includes("</body>")) {
-        finalHtml = finalHtml.replace("</body>", `${editScript}\n</body>`);
-      } else {
-        finalHtml += editScript;
-      }
-
-      const blob = new Blob([finalHtml], { type: "text/html" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
+    if (bodyContent) {
       const docLabel =
         redesignSelectedDoc === "resume"
           ? "Portfolio"
           : "Motivationsschreiben";
+
+      const cleanHtml = `<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <title>${docLabel}</title>
+  <style>
+    @page { size: A4 portrait; margin: 0; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      width: 100%;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    ${docCss}
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    }
+  </style>
+</head>
+<body contenteditable="true">
+  ${bodyContent}
+</body>
+</html>`;
+
+      const blob = new Blob([cleanHtml], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
       a.download = `Redesign_${docLabel}.html`;
       document.body.appendChild(a);
       a.click();
@@ -3221,6 +3683,24 @@ export default function App() {
 
       setDeMaskedMatchingResult(JSON.stringify(fullLetter));
       setStructuredLetter(fullLetter);
+
+      // Auto-inject into template if available
+      let templateToUse = scenario2Template;
+      if (!templateToUse && redesignResult?.[redesignSelectedStyle]?.cover_letter?.html) {
+        const cl = redesignResult[redesignSelectedStyle]!.cover_letter;
+        templateToUse = {
+          html: cl.html,
+          css: cl.css,
+          source: "scenario3",
+          title: `Design aus Szenario 3 (${redesignSelectedStyle === "kurvlinear" ? "Kurvlinear" : "Orthogonal"})`,
+        };
+        setScenario2Template(templateToUse);
+      }
+
+      if (templateToUse) {
+        const injected = injectDataIntoLetterHtml(templateToUse.html, templateToUse.css, fullLetter);
+        setGeneratedLetterHtml(injected);
+      }
     } catch (err: any) {
       setApiError(
         "Fehler beim Generieren des Motivationsschreibens: " + err.message,
@@ -5441,42 +5921,178 @@ export default function App() {
                     )}
                   </div>
                 ) : activeMode === "motivation" ? (
-                  // Mode 2 Output: Motivationsschreiben Letter text
+                  // Mode 2 Output: Motivationsschreiben Letter text & Design Template
                   <div className="space-y-6 flex-1 flex flex-col justify-between">
+                    {/* Template Notification */}
+                    {scenario2Notification && (
+                      <div className="bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 px-4 py-3 rounded-xl flex items-center justify-between text-xs font-semibold shadow-lg animate-fade-in">
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="h-4 w-4 text-emerald-400 shrink-0 animate-pulse" />
+                          <span>{scenario2Notification}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setScenario2Notification(null)}
+                          className="text-emerald-400 hover:text-white ml-2"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )}
+
                     {isMatchSending ? (
                       <InteractiveLoader mode="motivation" />
-                    ) : !generatedMatchingResult ? (
+                    ) : !generatedMatchingResult && !generatedLetterHtml && !scenario2Template ? (
                       <div className="h-full flex flex-col items-center justify-center text-center py-20 space-y-4 my-auto">
                         <div className="bg-slate-800/80 p-4 rounded-full border border-slate-700">
                           <Briefcase className="h-8 w-8 text-slate-400" />
                         </div>
                         <div>
                           <span className="text-sm font-bold text-slate-300 block">
-                            Bereit für den Motivationsschreiben-Abgleich
+                            Bereit für den Motivationsschreiben-Abgleich &amp; Design
                           </span>
                           <span className="text-xs text-slate-500 max-w-sm block mt-1 leading-relaxed">
-                            Laden Sie links Lebenslauf & Stellen-PDF hoch,
-                            tragen Sie Ihren Namen zur De-Maskierung ein und
-                            klicken Sie auf Generieren.
+                            Laden Sie links Lebenslauf &amp; Stellen-PDF hoch, oder importieren Sie direkt das generierte Design aus Szenario 3.
                           </span>
                         </div>
+                        {redesignResult?.[redesignSelectedStyle]?.cover_letter?.html && (
+                          <button
+                            type="button"
+                            onClick={sendCoverLetterToScenario2}
+                            className="mt-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/20 flex items-center gap-2"
+                          >
+                            <Sparkles className="h-4 w-4 text-indigo-200 animate-pulse" />
+                            Design-Vorlage aus Szenario 3 übernehmen
+                          </button>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        <div className="border-b border-slate-800 pb-2">
-                          <div>
-                            <span className="text-xs text-blue-400 font-semibold block uppercase tracking-wider">
-                              GENERIERTER ENTWURF
-                            </span>
-                            <h4 className="text-sm font-bold text-white mt-0.5">
-                              Individuelles Anschreiben
-                            </h4>
+                        {/* Design-Vorlage Action Header */}
+                        <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-400 bg-indigo-950/80 border border-indigo-800/50 px-2.5 py-0.5 rounded-full">
+                                Design-Vorlage
+                              </span>
+                              {scenario2Template ? (
+                                <span className="text-[11px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-md flex items-center gap-1">
+                                  <Check className="h-3 w-3" />
+                                  {scenario2Template.title || "Aktives HTML/CSS Design"}
+                                </span>
+                              ) : (
+                                <span className="text-[11px] text-slate-400">
+                                  Standard DIN 5008 Layout
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-slate-400">
+                              Sie können das generierte Design aus Szenario 3 verwenden oder eine beliebige Motivationsschreiben.html Datei hochladen.
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {redesignResult?.[redesignSelectedStyle]?.cover_letter?.html && (
+                              <button
+                                type="button"
+                                onClick={sendCoverLetterToScenario2}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition shadow-md flex items-center gap-1.5"
+                                title="Aktuelles Motivationsschreiben-Design aus Szenario 3 hier einfügen und befüllen"
+                              >
+                                <Sparkles className="h-3.5 w-3.5 text-indigo-200" />
+                                Aus Szenario 3 übernehmen
+                              </button>
+                            )}
+
+                            <label className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer">
+                              <Upload className="h-3.5 w-3.5 text-indigo-400" />
+                              <span>Vorlage (.html) laden</span>
+                              <input
+                                type="file"
+                                accept=".html,.htm"
+                                onChange={handleHtmlTemplateUpload}
+                                className="hidden"
+                              />
+                            </label>
+
+                            <button
+                              type="button"
+                              onClick={() => setIsPasteHtmlModalOpen(true)}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition flex items-center gap-1.5"
+                              title="HTML-Code direkt aus Zwischenablage einfügen"
+                            >
+                              <Code className="h-3.5 w-3.5 text-blue-400" />
+                              HTML einfügen
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Top View Switcher Tabs & Download Toolbar */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                          <div className="flex gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setScenario2ViewMode("design")}
+                              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                                scenario2ViewMode === "design"
+                                  ? "bg-indigo-600 text-white shadow-sm"
+                                  : "text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              <Layout className="h-3.5 w-3.5" />
+                              Design-Vorschau (A4)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScenario2ViewMode("structured")}
+                              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                                scenario2ViewMode === "structured"
+                                  ? "bg-indigo-600 text-white shadow-sm"
+                                  : "text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                              Formulardaten bearbeiten
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScenario2ViewMode("code")}
+                              className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition flex items-center gap-1.5 ${
+                                scenario2ViewMode === "code"
+                                  ? "bg-indigo-600 text-white shadow-sm"
+                                  : "text-slate-400 hover:text-slate-200"
+                              }`}
+                            >
+                              <FileCode className="h-3.5 w-3.5" />
+                              HTML &amp; CSS Code
+                            </button>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={downloadFilledLetterHtml}
+                              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-emerald-600/20"
+                              title="Befülltes Motivationsschreiben direkt im gewählten Design als HTML herunterladen"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Motivationsschreiben.html herunterladen
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => printLetterHtml(generatedLetterHtml || "")}
+                              className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition shadow-md shadow-indigo-600/20"
+                              title="Druckansicht öffnen oder als PDF speichern"
+                            >
+                              <Printer className="h-3.5 w-3.5" />
+                              Drucken / PDF
+                            </button>
                           </div>
                         </div>
 
                         {/* Visualization */}
                         {generatedMatchingResult && (
-                          <div className="h-64 w-full bg-slate-950/50 rounded-xl border border-slate-800 p-2">
+                          <div className="h-56 w-full bg-slate-950/50 rounded-xl border border-slate-800 p-2">
                             <ResponsiveContainer width="100%" height="100%">
                               <BarChart
                                 data={(() => {
@@ -5529,233 +6145,278 @@ export default function App() {
                           </div>
                         )}
 
-                        <div className="bg-slate-900 p-8 text-slate-200 font-serif min-h-[500px] rounded-lg border border-slate-800 space-y-4">
-                          {structuredLetter && (
-                            <>
-                              {/* 1. Briefkopf */}
-                              <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
-                                <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
-                                  <MapPin className="h-4 w-4 text-blue-500" />
-                                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                                    1. Briefkopf (Absenderadresse,
-                                    Empfängeradresse, Datum)
-                                  </h4>
+                        {/* 1. VIEW MODE: DESIGN PREVIEW (A4) */}
+                        {scenario2ViewMode === "design" && (
+                          <div className="bg-slate-950 p-4 sm:p-6 rounded-2xl border border-slate-800 flex flex-col items-center justify-center space-y-4 shadow-2xl">
+                            <div className="w-full flex items-center justify-between text-xs text-slate-400 border-b border-slate-800 pb-3">
+                              <div className="flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                                <span className="font-semibold text-slate-200">
+                                  Live DIN A4 Motivationsschreiben-Vorschau {scenario2Template ? `(${scenario2Template.title || "Design Vorlage"})` : "(Standard Design)"}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (generatedLetterHtml) {
+                                      navigator.clipboard.writeText(generatedLetterHtml);
+                                      setScenario2Notification("HTML-Code in die Zwischenablage kopiert!");
+                                      setTimeout(() => setScenario2Notification(null), 3000);
+                                    }
+                                  }}
+                                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-850 rounded text-slate-300 text-[11px] font-medium border border-slate-800 flex items-center gap-1"
+                                >
+                                  <Copy className="h-3 w-3" />
+                                  HTML kopieren
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="w-full max-w-[820px] bg-white rounded-lg shadow-2xl overflow-hidden border border-slate-700 min-h-[950px] relative">
+                              <iframe
+                                title="Motivationsschreiben Vorschau"
+                                srcDoc={
+                                  generatedLetterHtml ||
+                                  `<!DOCTYPE html><html lang="de"><head><meta charset="utf-8"><style>body{font-family:sans-serif;padding:40px;color:#333;line-height:1.6;}</style></head><body><h2>Motivationsschreiben</h2><p>Laden Sie links Lebenslauf &amp; Stellenanzeige hoch oder klicken Sie oben auf <strong>"Aus Szenario 3 übernehmen"</strong>.</p></body></html>`
+                                }
+                                className="w-full min-h-[950px] border-0"
+                                sandbox="allow-same-origin allow-scripts"
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 2. VIEW MODE: STRUCTURED FORM FIELDS */}
+                        {scenario2ViewMode === "structured" && (
+                          <div className="bg-slate-900 p-6 sm:p-8 text-slate-200 font-serif min-h-[500px] rounded-2xl border border-slate-800 space-y-4">
+                            {structuredLetter && (
+                              <>
+                                {/* 1. Briefkopf */}
+                                <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
+                                  <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
+                                    <MapPin className="h-4 w-4 text-blue-500" />
+                                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                                      1. Briefkopf (Absenderadresse,
+                                      Empfängeradresse, Datum)
+                                    </h4>
+                                  </div>
+
+                                  <div className="flex flex-col md:flex-row justify-between gap-4">
+                                    <div className="w-full">
+                                      <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
+                                        Absenderadresse
+                                      </label>
+                                      <textarea
+                                        value={
+                                          structuredLetter.senderAddress || ""
+                                        }
+                                        onChange={(e) =>
+                                          handleStructuredLetterChange({
+                                            ...structuredLetter,
+                                            senderAddress: e.target.value,
+                                          })
+                                        }
+                                        className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                        rows={4}
+                                        placeholder="Name&#10;Straße Hausnummer&#10;PLZ Ort&#10;E-Mail / Telefon"
+                                      />
+                                    </div>
+                                    <div className="w-full">
+                                      <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">
+                                        Empfängeradresse
+                                      </label>
+                                      <textarea
+                                        value={
+                                          structuredLetter.recipientAddress || ""
+                                        }
+                                        onChange={(e) =>
+                                          handleStructuredLetterChange({
+                                            ...structuredLetter,
+                                            recipientAddress: e.target.value,
+                                          })
+                                        }
+                                        className="w-full bg-slate-950 p-3 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                        rows={4}
+                                        placeholder="Firmenname&#10;z. Hd. Ansprechpartner&#10;Straße Hausnummer&#10;PLZ Ort"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">
+                                      Datum
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={structuredLetter.date || ""}
+                                      onChange={(e) =>
+                                        handleStructuredLetterChange({
+                                          ...structuredLetter,
+                                          date: e.target.value,
+                                        })
+                                      }
+                                      className="w-full bg-slate-950 p-2.5 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                    />
+                                  </div>
                                 </div>
 
-                                <div className="flex flex-col md:flex-row justify-between gap-4">
-                                  <div className="w-full">
+                                {/* 2. Betreff */}
+                                <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
+                                  <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
+                                    <FileText className="h-4 w-4 text-blue-500" />
+                                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                                      2. Betreff
+                                    </h4>
+                                  </div>
+
+                                  <div>
                                     <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                      Absenderadresse
+                                      Betreffzeile
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={structuredLetter.subject || ""}
+                                      onChange={(e) =>
+                                        handleStructuredLetterChange({
+                                          ...structuredLetter,
+                                          subject: e.target.value,
+                                        })
+                                      }
+                                      className="w-full bg-slate-950 p-2.5 rounded-lg text-xs font-bold border border-slate-850 font-serif focus:outline-none focus:border-blue-500 transition"
+                                      placeholder="Bewerbung als..."
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* 3. Anschreiben */}
+                                <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
+                                  <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
+                                    <Mail className="h-4 w-4 text-blue-500" />
+                                    <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+                                      3. Anschreiben (Anrede, Einleitung,
+                                      Hauptteil, Schlussteil, Unterschrift)
+                                    </h4>
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
+                                      Anrede
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={structuredLetter.salutation || ""}
+                                      onChange={(e) =>
+                                        handleStructuredLetterChange({
+                                          ...structuredLetter,
+                                          salutation: e.target.value,
+                                        })
+                                      }
+                                      className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
+                                      Einleitung
                                     </label>
                                     <textarea
-                                      value={
-                                        structuredLetter.senderAddress || ""
-                                      }
+                                      value={structuredLetter.introduction || ""}
                                       onChange={(e) =>
-                                        setStructuredLetter({
+                                        handleStructuredLetterChange({
                                           ...structuredLetter,
-                                          senderAddress: e.target.value,
+                                          introduction: e.target.value,
                                         })
                                       }
                                       className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                      rows={4}
-                                      placeholder="Name&#10;Straße Hausnummer&#10;PLZ Ort&#10;E-Mail / Telefon"
+                                      rows={3}
                                     />
                                   </div>
-                                  <div className="w-full">
-                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">
-                                      Empfängeradresse
+
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
+                                      Hauptteil
                                     </label>
                                     <textarea
-                                      value={
-                                        structuredLetter.recipientAddress || ""
-                                      }
+                                      value={structuredLetter.mainBody || ""}
                                       onChange={(e) =>
-                                        setStructuredLetter({
+                                        handleStructuredLetterChange({
                                           ...structuredLetter,
-                                          recipientAddress: e.target.value,
+                                          mainBody: e.target.value,
                                         })
                                       }
-                                      className="w-full bg-slate-950 p-3 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                      rows={4}
-                                      placeholder="Firmenname&#10;z. Hd. Ansprechpartner&#10;Straße Hausnummer&#10;PLZ Ort"
+                                      className="w-full bg-slate-950 p-3 rounded-lg text-xs min-h-[150px] border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
+                                      Schlussteil
+                                    </label>
+                                    <textarea
+                                      value={structuredLetter.closing || ""}
+                                      onChange={(e) =>
+                                        handleStructuredLetterChange({
+                                          ...structuredLetter,
+                                          closing: e.target.value,
+                                        })
+                                      }
+                                      className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
+                                      rows={3}
+                                    />
+                                  </div>
+
+                                  <div>
+                                    <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
+                                      Unterschrift (Name)
+                                    </label>
+                                    <input
+                                      type="text"
+                                      value={structuredLetter.signature || ""}
+                                      onChange={(e) =>
+                                        handleStructuredLetterChange({
+                                          ...structuredLetter,
+                                          signature: e.target.value,
+                                        })
+                                      }
+                                      className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
                                     />
                                   </div>
                                 </div>
 
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider text-right">
-                                    Datum
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={structuredLetter.date || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        date: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-2.5 rounded-lg text-xs text-right border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                  />
+                                <div className="flex flex-col sm:flex-row gap-4 mt-4 pt-4 border-t border-slate-800">
+                                  <button
+                                    onClick={() => {
+                                      const text = `${structuredLetter.senderAddress}\n\n${structuredLetter.recipientAddress}\n\n${structuredLetter.date}\n\n${structuredLetter.subject}\n\n${structuredLetter.salutation}\n\n${structuredLetter.introduction}\n\n${structuredLetter.mainBody}\n\n${structuredLetter.closing}\n\nMit freundlichen Grüßen\n\n${structuredLetter.signature}`;
+                                      navigator.clipboard.writeText(text);
+                                      alert("Text in die Zwischenablage kopiert!");
+                                    }}
+                                    className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg text-white font-bold text-xs"
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                    Text kopieren
+                                  </button>
                                 </div>
-                              </div>
+                              </>
+                            )}
+                          </div>
+                        )}
 
-                              {/* 2. Betreff */}
-                              <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
-                                <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
-                                  <FileText className="h-4 w-4 text-blue-500" />
-                                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                                    2. Betreff
-                                  </h4>
-                                </div>
-
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                    Betreffzeile
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={structuredLetter.subject || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        subject: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-2.5 rounded-lg text-xs font-bold border border-slate-850 font-serif focus:outline-none focus:border-blue-500 transition"
-                                    placeholder="Bewerbung als..."
-                                  />
-                                </div>
-                              </div>
-
-                              {/* 3. Anschreiben */}
-                              <div className="space-y-4 bg-slate-950/40 p-4 sm:p-6 rounded-xl border border-slate-800/60">
-                                <div className="flex items-center gap-2 pb-2 border-b border-slate-850 font-sans">
-                                  <Mail className="h-4 w-4 text-blue-500" />
-                                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-                                    3. Anschreiben (Anrede, Einleitung,
-                                    Hauptteil, Schlussteil, Unterschrift)
-                                  </h4>
-                                </div>
-
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                    Anrede
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={structuredLetter.salutation || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        salutation: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                    Einleitung
-                                  </label>
-                                  <textarea
-                                    value={structuredLetter.introduction || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        introduction: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                    rows={3}
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                    Hauptteil
-                                  </label>
-                                  <textarea
-                                    value={structuredLetter.mainBody || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        mainBody: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-3 rounded-lg text-xs min-h-[150px] border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                    Schlussteil
-                                  </label>
-                                  <textarea
-                                    value={structuredLetter.closing || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        closing: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-3 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                    rows={3}
-                                  />
-                                </div>
-
-                                <div>
-                                  <label className="block text-[10px] text-slate-500 font-sans mb-1 uppercase tracking-wider">
-                                    Unterschrift (Name)
-                                  </label>
-                                  <input
-                                    type="text"
-                                    value={structuredLetter.signature || ""}
-                                    onChange={(e) =>
-                                      setStructuredLetter({
-                                        ...structuredLetter,
-                                        signature: e.target.value,
-                                      })
-                                    }
-                                    className="w-full bg-slate-950 p-2.5 rounded-lg text-xs border border-slate-800 font-serif focus:outline-none focus:border-blue-500 transition"
-                                  />
-                                </div>
-                              </div>
-
-                              <div className="flex flex-col sm:flex-row gap-4 mt-4 pt-4 border-t border-slate-800">
-                                <button
-                                  onClick={() => {
-                                    const text = `${structuredLetter.senderAddress}\n\n${structuredLetter.recipientAddress}\n\n${structuredLetter.date}\n\n${structuredLetter.subject}\n\n${structuredLetter.salutation}\n\n${structuredLetter.introduction}\n\n${structuredLetter.mainBody}\n\n${structuredLetter.closing}\n\nMit freundlichen Grüßen\n\n${structuredLetter.signature}`;
-                                    navigator.clipboard.writeText(text);
-                                    alert("Kopiert!");
-                                  }}
-                                  className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg text-white font-bold text-xs"
-                                >
-                                  <Copy className="h-4 w-4" />
-                                  Kopieren
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-
-                        {/* HTML Code Editor and Printing fallback option */}
-                        {generatedLetterHtml && (
+                        {/* 3. VIEW MODE: HTML / CSS CODE EDITOR */}
+                        {scenario2ViewMode === "code" && generatedLetterHtml && (
                           <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 space-y-4">
                             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                               <div>
                                 <div className="flex items-center gap-1.5">
                                   <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
                                   <span className="text-xs text-emerald-400 font-semibold uppercase tracking-wider">
-                                    HTML-CODE DES ANSCHREIBENS (DRUCK-FALLBACK)
+                                    HTML-CODE DES ANSCHREIBENS (DRUCK &amp; EXPORT)
                                   </span>
                                 </div>
                                 <span className="text-xs text-slate-400 block mt-1">
                                   Sie können diesen HTML/CSS-Code hier direkt
-                                  anpassen und über den Button rechts drucken
-                                  oder als PDF sichern.
+                                  anpassen und über den Button oben drucken
+                                  oder als Motivationsschreiben.html herunterladen.
                                 </span>
                               </div>
                               <div className="flex items-center gap-2 shrink-0">
@@ -6316,6 +6977,18 @@ export default function App() {
                                   <Printer className="h-3.5 w-3.5" />
                                   Drucken / PDF
                                 </button>
+                                {redesignResult?.[redesignSelectedStyle]?.cover_letter?.html && (
+                                  <button
+                                    type="button"
+                                    onClick={sendCoverLetterToScenario2}
+                                    className="flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/80 text-white text-xs font-bold rounded-lg transition shadow-md shadow-indigo-600/30 cursor-pointer"
+                                    id="btn-send-cover-letter-to-s2"
+                                    title="Dieses Motivationsschreiben-Design direkt für Szenario 2 übernehmen und mit den Bewerbungsdaten befüllen"
+                                  >
+                                    <Sparkles className="h-3.5 w-3.5 text-indigo-200 animate-pulse" />
+                                    Design für Szenario 2 übernehmen &amp; befüllen
+                                  </button>
+                                )}
                               </div>
                             )}
                           </div>
@@ -7614,6 +8287,66 @@ export default function App() {
               className="w-full h-full border-0"
               sandbox="allow-same-origin allow-scripts"
             />
+          </div>
+        </div>
+      )}
+
+      {/* PASTE HTML CODE MODAL FOR SCENARIO 2 */}
+      {isPasteHtmlModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/90 backdrop-blur-sm z-[90] flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-indigo-500/40 rounded-2xl max-w-2xl w-full shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+              <div className="flex items-center gap-2.5">
+                <Code className="h-5 w-5 text-indigo-400" />
+                <h3 className="text-base font-bold text-white">
+                  Motivationsschreiben HTML-Code einfügen
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPasteHtmlModalOpen(false);
+                  setPastedHtmlInput("");
+                }}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3 overflow-y-auto">
+              <p className="text-xs text-slate-400">
+                Fügen Sie hier den vollständigen HTML/CSS-Code Ihres Motivationsschreibens ein (z. B. aus Szenario 3 oder einer externen HTML-Vorlage). Die Daten Ihres Anschreibens werden automatisch an den passenden Stellen befüllt.
+              </p>
+              <textarea
+                value={pastedHtmlInput}
+                onChange={(e) => setPastedHtmlInput(e.target.value)}
+                placeholder="<!DOCTYPE html>&#10;<html>&#10;<head>&#10;<style>...</style>&#10;</head>&#10;<body>...</body>&#10;</html>"
+                className="w-full h-72 bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500 leading-relaxed"
+              />
+            </div>
+
+            <div className="p-4 border-t border-slate-800 bg-slate-950/50 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPasteHtmlModalOpen(false);
+                  setPastedHtmlInput("");
+                }}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition"
+              >
+                Abbrechen
+              </button>
+              <button
+                type="button"
+                onClick={() => applyPastedHtmlTemplate(pastedHtmlInput)}
+                disabled={!pastedHtmlInput.trim()}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/20 flex items-center gap-1.5"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Vorlage übernehmen &amp; befüllen
+              </button>
+            </div>
           </div>
         </div>
       )}
